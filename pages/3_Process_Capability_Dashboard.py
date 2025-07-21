@@ -1,4 +1,4 @@
-# pages/3_Process_Capability_Dashboard.py
+## pages/3_Process_Capability_Dashboard.py
 
 import streamlit as st
 import pandas as pd
@@ -35,7 +35,7 @@ def render_capability_charts_tab(manager, filtered_df: pd.DataFrame, deviations_
             key="cpk_cqa"
         )
     with col2:
-        # Safely access spec limits
+        # Safely access spec limits from the config object
         spec_limit_info = cpk_config.spec_limits.get(selected_cqa)
         if spec_limit_info:
             default_lsl = spec_limit_info.lsl
@@ -46,8 +46,8 @@ def render_capability_charts_tab(manager, filtered_df: pd.DataFrame, deviations_
 
         st.write("**Interactive Specification Limits (for 'What-If' Analysis):**")
         lsl_col, usl_col = st.columns(2)
-        lsl = lsl_col.number_input("Lower Spec Limit (LSL)", value=float(default_lsl), format="%.2f", step=0.1, key="cpk_lsl")
-        usl = usl_col.number_input("Upper Spec Limit (USL)", value=float(default_usl), format="%.2f", step=0.1, key="cpk_usl")
+        lsl = lsl_col.number_input("Lower Spec Limit (LSL)", value=float(default_lsl or 0.0), format="%.2f", step=0.1, key="cpk_lsl")
+        usl = usl_col.number_input("Upper Spec Limit (USL)", value=float(default_usl or 0.0), format="%.2f", step=0.1, key="cpk_usl")
 
     if lsl is not None and usl is not None and lsl >= usl:
         st.error("Lower Specification Limit (LSL) must be less than Upper Specification Limit (USL).")
