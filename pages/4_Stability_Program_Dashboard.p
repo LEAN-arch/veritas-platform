@@ -83,13 +83,14 @@ def render_stability_profile(filtered_df: pd.DataFrame, stability_config):
     
     with col1:
         assay_purity = 'purity'
-        if assay_purity in stability_config.spec_limits and assay_purity in filtered_df.columns:
+        spec_limits = stability_config.spec_limits.get(assay_purity)
+        if spec_limits and assay_purity in filtered_df.columns:
             # Pooled data can only be used if there are multiple lots and the test passes
-            use_pooled_purity = len(lot_filter) > 1 and poolability_results.get(assay_purity, {}).get('poolable', False)
-            title = f"Purity Trend {'(Pooled)' if use_pooled_purity else '(Separate Lots)'}"
+            is_poolable = len(lot_filter) > 1 and poolability_results.get(assay_purity, {}).get('poolable', False)
+            title = f"Purity Trend {'(Pooled)' if is_poolable else '(Separate Lots)'}"
             
-            projection = analytics.calculate_stability_projection(filtered_df, assay_purity, use_pooled_purity)
-            fig = plotting.plot_stability_trend(filtered_df, assay_purity, title, stability_config.spec_limits[assay_purity], projection)
+            projection = analytics.calculate_stability_projection(filtered_df, assay_purity, is_poolable)
+            fig = plotting.plot_stability_trend(filtered_df, assay_purity, title, spec_limits, projection)
             st.plotly_chart(fig, use_container_width=True)
             
             if projection:
@@ -99,13 +100,14 @@ def render_stability_profile(filtered_df: pd.DataFrame, stability_config):
 
     with col2:
         assay_impurity = 'main_impurity'
-        if assay_impurity in stability_config.spec_limits and assay_impurity in filtered_df.columns:
+        spec_limits = stability_config.spec_limits.get(assay_impurity)
+        if spec_limits and assay_impurity in filtered_df.columns:
             # Pooled data can only be used if there are multiple lots and the test passes
-            use_pooled_impurity = len(lot_filter) > 1 and poolability_results.get(assay_impurity, {}).get('poolable', False)
-            title = f"Main Impurity Trend {'(Pooled)' if use_pooled_impurity else '(Separate Lots)'}"
+            is_poolable = len(lot_filter) > 1 and poolability_results.get(assay_impurity, {}).get('poolable', False)
+            title = f"Main Impurity Trend {'(Pooled)' if is_poolable else '(Separate Lots)'}"
             
-            projection = analytics.calculate_stability_projection(filtered_df, assay_impurity, use_pooled_impurity)
-            fig = plotting.plot_stability_trend(filtered_df, assay_impurity, title, stability_config.spec_limits[assay_impurity], projection)
+            projection = analytics.calculate_stability_projection(filtered_df, assay_impurity, is_poolable)
+            fig = plotting.plot_stability_trend(filtered_df, assay_impurity, title, spec_limits, projection)
             st.plotly_chart(fig, use_container_width=True)
             
             if projection:
@@ -172,11 +174,10 @@ def main():
             # If only one lot, ensure poolability results are cleared so plots don't show "Pooled"
             st.session_state.poolability_results = {}
 
-
         render_stability_profile(filtered_df, manager.settings.app.stability_specs)
 
         with st.expander("Show Raw Stability Data for Selected Lots"):
-            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            st.dataframe(filtered_df.sort_values(by=['lot_id', 'timepoint_months']), use_container_width=True, hide_index=True)
 
         auth.display_compliance_footer()
 
