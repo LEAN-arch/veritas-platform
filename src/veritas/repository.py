@@ -3,7 +3,7 @@
 import pandas as pd
 import numpy as np
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -11,16 +11,19 @@ class MockDataRepository:
     """
     A mock data repository for the VERITAS application.
 
-    This class simulates a data access layer, providing predictable and consistent
+    This class simulates a data access layer (DAL), providing predictable and consistent
     datasets for development and testing. It ensures that the application's business
-    logic can be developed independently of a live database connection.
+    logic can be developed independently of a live database connection. In a real
+    production environment, this class would be replaced by a concrete implementation
+    that connects to a real database (e.g., PostgreSQL, Oracle).
     """
     def __init__(self, seed: int = 42):
         """
         Initializes the repository and generates all mock datasets.
 
         Args:
-            seed (int): A random seed to ensure reproducibility of generated data.
+            seed (int): A random seed to ensure reproducibility of generated data,
+                        which is essential for predictable testing.
         """
         self._seed = seed
         self._rng = np.random.default_rng(self._seed)
@@ -44,20 +47,23 @@ class MockDataRepository:
             data_type (str): The key of the dataset to retrieve (e.g., 'hplc').
 
         Returns:
-            pd.DataFrame: A copy of the requested dataset.
+            pd.DataFrame: A copy of the requested dataset to prevent in-place modification.
 
         Raises:
             ValueError: If the requested data_type is unknown.
         """
         if data_type not in self._cache:
-            raise ValueError(f"Unknown data_type: {data_type}. Available types: {list(self._cache.keys())}")
+            known_types = list(self._cache.keys())
+            logger.error(f"Attempted to access unknown data_type: '{data_type}'. Available types: {known_types}")
+            raise ValueError(f"Unknown data_type: {data_type}. Available types: {known_types}")
         return self._cache[data_type].copy()
 
     def _generate_hplc_data(self) -> pd.DataFrame:
-        """Generates mock HPLC data."""
-        num_records = 150
+        """Generates mock HPLC data for various studies."""
+        num_records = 250
         data = {
             'sample_id': [f'SMPL-{2024000 + i}' for i in range(num_records)],
+            'study_id': self._rng.choice(['ST-101', 'ST-102', 'ST-201'], size=num_records, p=[0.4, 0.4, 0.2]),
             'batch_id': self._rng.choice([f'B{101 + i}' for i in range(5)], size=num_records),
             'instrument_id': self._rng.choice(['HPLC-01', 'HPLC-02', 'HPLC-03'], size=num_records),
             'analyst': self._rng.choice(['j.doe', 'p.smith', 's.jones'], size=num_records),
@@ -71,6 +77,7 @@ class MockDataRepository:
         df.loc[df['instrument_id'] == 'HPLC-03', 'purity'] -= 0.75
         # Inject some nulls for testing QC
         df.loc[df.sample(n=5, random_state=self._seed).index, 'purity'] = np.nan
+        df.loc[df.sample(n=3, random_state=self._seed+1).index, 'bio_activity'] = -99 # Impossible negative value
         return df
 
     def _generate_deviations_data(self) -> pd.DataFrame:
@@ -94,18 +101,21 @@ class MockDataRepository:
         return pd.DataFrame(data)
 
     def _generate_stability_data(self) -> pd.DataFrame:
-        """Generates mock stability study data."""
+        """Generates mock stability study data with predictable trends."""
+        products = {'PRODA': 'LOTA', 'PRODB': 'LOTB'}
         lots = ['LOTA-001', 'LOTA-002', 'LOTB-001']
         timepoints = [0, 3, 6, 9, 12, 18, 24]
         records = []
         for lot in lots:
+            product_id = [p for p, l_prefix in products.items() if lot.startswith(l_prefix)][0]
             initial_purity = self._rng.uniform(99.5, 99.9)
             degradation_rate = self._rng.uniform(0.04, 0.08)
-            if lot == 'LOTA-002': # Make one lot degrade faster for poolability tests
-                degradation_rate *= 2
+            # Make one lot degrade faster for poolability tests
+            if lot == 'LOTA-002': 
+                degradation_rate *= 2.5
             for t in timepoints:
                 records.append({
-                    'product_id': lot.split('-')[0],
+                    'product_id': product_id,
                     'lot_id': lot,
                     'timepoint_months': t,
                     'purity': round(initial_purity - degradation_rate * t + self._rng.normal(0, 0.1), 2),
@@ -114,29 +124,30 @@ class MockDataRepository:
         return pd.DataFrame(records)
 
     def _generate_audit_log(self) -> pd.DataFrame:
-        """Generates a mock audit log."""
+        """Generates a mock audit log with various event types."""
         num_records = 200
         data = {
             'timestamp': pd.to_datetime('2024-01-01') + pd.to_timedelta(np.arange(num_records) * 8, unit='h'),
             'user': self._rng.choice(['j.doe', 'p.smith', 's.jones', 'system'], size=num_records, p=[0.4, 0.3, 0.2, 0.1]),
             'action': self._rng.choice([
                 "Data Entry", "Data Update", "User Login", "Report Generated",
-                "Deviation Created", "E-Signature Applied"
+                "Deviation Created", "E-Signature Applied", "QC Check Executed"
             ], size=num_records),
             'record_id': self._rng.choice(self._cache['hplc']['sample_id'].tolist()[:50] + self._cache['deviations']['id'].tolist(), size=num_records),
             'details': "Action performed as per standard procedure."
         }
-        return pd.DataFrame(data)
+        return pd.DataFrame(data).sort_values('timestamp', ascending=False)
 
     def write_audit_log(self, user: str, action: str, details: str, record_id: Optional[str] = None) -> None:
         """
-        Simulates writing a new entry to the audit log.
+        Simulates writing a new entry to the audit log. In a real app, this would
+        be an INSERT query to the audit trail table.
 
         Args:
             user (str): The user performing the action.
             action (str): The action being performed.
             details (str): A description of the action.
-            record_id (Optional[str]): The ID of the record being affected.
+            record_id (Optional[str]): The ID of the record being affected, if any.
         """
         new_entry = pd.DataFrame([{
             'timestamp': pd.Timestamp.now(tz='UTC'),
@@ -145,12 +156,12 @@ class MockDataRepository:
             'record_id': record_id,
             'details': details
         }])
-        self._cache['audit'] = pd.concat([self._cache['audit'], new_entry], ignore_index=True)
+        self._cache['audit'] = pd.concat([new_entry, self._cache['audit']], ignore_index=True)
         logger.info(f"AUDIT LOG: User '{user}' performed action '{action}'.")
 
     def create_deviation(self, title: str, linked_record: str, priority: str) -> str:
-        """Simulates creating a new deviation record."""
-        new_id = f"DEV-{2400 + len(self._cache['deviations'])}"
+        """Simulates creating a new deviation record in the database."""
+        new_id = f"DEV-{(2400 + len(self._cache['deviations']))}"
         new_entry = pd.DataFrame([{
             'id': new_id,
             'status': 'Open',
@@ -163,5 +174,10 @@ class MockDataRepository:
         return new_id
 
     def update_deviation_status(self, dev_id: str, new_status: str) -> None:
-        """Simulates updating the status of a deviation."""
-        self._cache['deviations'].loc[self._cache['deviations']['id'] == dev_id, 'status'] = new_status
+        """Simulates updating the status of an existing deviation."""
+        idx = self._cache['deviations']['id'] == dev_id
+        if idx.any():
+            self._cache['deviations'].loc[idx, 'status'] = new_status
+            logger.info(f"Updated deviation {dev_id} to status {new_status}")
+        else:
+            logger.warning(f"Attempted to update non-existent deviation {dev_id}")
