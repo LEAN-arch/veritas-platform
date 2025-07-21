@@ -3,7 +3,7 @@
 import io
 import pandas as pd
 from datetime import datetime
-from fpdf import FPDF, fpdf # Use fpdf2, aliased as fpdf
+from fpdf import FPDF
 from pptx import Presentation
 from pptx.util import Inches, Pt
 import plotly.graph_objects as go
@@ -14,7 +14,7 @@ from typing import Dict, Any
 class VeritasPDF(FPDF):
     """
     A custom FPDF class with VERITAS-branded headers, footers, and watermarking.
-    This provides a standardized report format.
+    This provides a standardized, GxP-compliant report format.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -37,33 +37,33 @@ class VeritasPDF(FPDF):
         self.set_y(-15)
         self.set_font('Helvetica', 'I', 8)
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
-        self.set_x(self.w - self.r_margin - 50)
+        self.set_x(self.w - self.r_margin - 50) # Position for right-aligned text
         self.cell(50, 10, 'VERITAS CONFIDENTIAL', 0, 0, 'R')
 
     def _add_watermark(self) -> None:
         """Internal method to render the watermark text on the page."""
         if self.watermark_text:
             self.set_font('Helvetica', 'B', 50)
-            self.set_text_color(220, 220, 220) # Light gray
-            # Rotate and place the watermark text diagonally
+            self.set_text_color(230, 230, 230) # Light gray
+            # Rotate and place the watermark text diagonally in the center
             with self.rotation(45, x=self.w / 2, y=self.h / 2):
                 self.text(x=self.w / 2 - 50, y=self.h / 2, text=self.watermark_text)
-            self.set_text_color(0, 0, 0) # Reset to black
+            self.set_text_color(0, 0, 0) # Reset text color to black
 
-    def add_page(self, orientation: str = '', same_font_as_before: bool = False, format: str = '', duration: int=0) -> None:
-        """Overrides the default add_page to include the watermark."""
-        super().add_page(orientation=orientation)
+    def add_page(self, orientation: str = '', *args, **kwargs) -> None:
+        """Overrides the default add_page to include the watermark automatically."""
+        super().add_page(orientation=orientation, *args, **kwargs)
         self._add_watermark()
 
     def chapter_title(self, title: str) -> None:
         """Adds a formatted chapter title to the PDF."""
         self.set_font('Helvetica', 'B', 12)
-        self.set_fill_color(230, 230, 230) # Light gray background
+        self.set_fill_color(220, 220, 220) # Light gray background
         self.cell(0, 8, title, 0, 1, 'L', fill=True)
         self.ln(4)
 
     def chapter_body(self, body: str) -> None:
-        """Adds a formatted body of text to the PDF."""
+        """Adds a formatted body of text (e.g., commentary) to the PDF."""
         self.set_font('Helvetica', '', 10)
         self.multi_cell(0, 5, body)
         self.ln()
@@ -71,7 +71,7 @@ class VeritasPDF(FPDF):
     def add_dataframe(self, df: pd.DataFrame, title: str) -> None:
         """
         Renders a pandas DataFrame as a table in the PDF.
-        Handles dynamic column width calculation.
+        It uses FPDF2's robust built-in table functionality.
         """
         if not isinstance(df, pd.DataFrame):
             raise TypeError("df must be a pandas DataFrame.")
@@ -80,25 +80,25 @@ class VeritasPDF(FPDF):
             return
 
         self.chapter_title(title)
+        self.set_font("Helvetica", size=9)
         
-        # Use FPDF2's built-in table functionality for robustness
-        with self.table(text_align="CENTER", col_widths=(25, 50, 25, 40, 25, 25)) as table:
-            # Header
+        # Use FPDF2's built-in table functionality for robustness and auto-layout
+        with self.table(text_align="CENTER", first_row_as_header=True) as table:
+            # Add header from DataFrame columns
             header = table.row()
             for col_name in df.columns:
                 header.cell(col_name)
             
-            # Rows
+            # Add data rows
             for _, data_row in df.iterrows():
                 row = table.row()
                 for item in data_row:
                     row.cell(str(item))
         self.ln(5)
 
-
     def add_plot(self, fig: go.Figure, title: str) -> None:
         """
-        Renders a Plotly figure as an image in the PDF.
+        Renders a Plotly figure as a high-resolution image in the PDF.
 
         Args:
             fig (go.Figure): The Plotly figure object to render.
@@ -114,17 +114,17 @@ class VeritasPDF(FPDF):
         self.ln(5)
 
     def add_signature_section(self, signature_details: Dict) -> None:
-        """Adds a formatted electronic signature block to the PDF."""
-        self.chapter_title("Electronic Signature")
+        """Adds a formatted 21 CFR Part 11 compliant electronic signature block."""
+        self.chapter_title("Electronic Signature (21 CFR Part 11)")
         sig_body = (
-            f"This document was electronically signed and locked in the VERITAS system, "
-            f"in accordance with 21 CFR Part 11 requirements.\n\n"
+            f"This document was electronically signed and locked in the VERITAS system.\n\n"
             f"Signed By: {signature_details.get('user', 'N/A')}\n"
             f"Signature Timestamp: {signature_details.get('timestamp', 'N/A')}\n"
             f"Meaning of Signature: {signature_details.get('reason', 'N/A')}"
         )
-        self.chapter_body(sig_body)
-
+        self.set_font('Helvetica', '', 10)
+        self.multi_cell(0, 5, sig_body)
+        self.ln()
 
 def generate_pdf_report(report_data: Dict[str, Any], watermark: str = "") -> bytes:
     """
@@ -153,11 +153,9 @@ def generate_pdf_report(report_data: Dict[str, Any], watermark: str = "") -> byt
         pdf.set_watermark(watermark)
     pdf.add_page()
 
-    # 1.0 Summary Section
     pdf.chapter_title(f"1.0 Summary for Study: {study_id}")
-    pdf.chapter_body(f"Analyst Commentary: {commentary}")
+    pdf.chapter_body(f"Analyst Commentary:\n{commentary}")
 
-    # 2.0 Data & Analysis Section
     if sections_config.get('include_summary_stats'):
         summary_stats = df[report_data['cqa']].describe().round(3).reset_index()
         summary_stats.columns = ['Statistic', 'Value']
@@ -167,12 +165,10 @@ def generate_pdf_report(report_data: Dict[str, Any], watermark: str = "") -> byt
         plot_title = fig.layout.title.text or "Process Capability Analysis"
         pdf.add_plot(fig, f"2.2 {plot_title}")
     
-    # 3.0 Full Dataset Appendix
     if sections_config.get('include_full_dataset'):
-        pdf.add_page()
+        pdf.add_page() # Add a new page for the appendix
         pdf.add_dataframe(df, "3.0 Appendix: Full Dataset")
 
-    # 4.0 Electronic Signature
     if signature_details:
         pdf.add_signature_section(signature_details)
 
@@ -188,24 +184,24 @@ def _add_table_to_slide(slide, df: pd.DataFrame, left: Inches, top: Inches, widt
     rows += 1  # Add a row for the header
     table = slide.shapes.add_table(rows, cols, left, top, width, height).table
 
-    # Set column widths to be equal
     for i in range(cols):
         table.columns[i].width = Inches(width.inches / cols)
 
-    # Populate header
     for c, col_name in enumerate(df.columns):
         cell = table.cell(0, c)
         cell.text = str(col_name)
         cell.text_frame.paragraphs[0].font.bold = True
+        cell.text_frame.paragraphs[0].font.size = Pt(12)
 
-    # Populate data rows
     for r, data_row in enumerate(df.itertuples(index=False)):
         for c, val in enumerate(data_row):
-            table.cell(r + 1, c).text = str(val) if pd.notna(val) else ""
+            cell = table.cell(r + 1, c)
+            cell.text = str(val) if pd.notna(val) else ""
+            cell.text_frame.paragraphs[0].font.size = Pt(11)
 
 def generate_ppt_report(report_data: Dict[str, Any]) -> bytes:
     """
-    Generates a PowerPoint report with data and plots.
+    Generates a standard PowerPoint report with data and plots.
 
     Args:
         report_data (Dict[str, Any]): A dictionary containing data and configuration for the PPT.
@@ -218,17 +214,15 @@ def generate_ppt_report(report_data: Dict[str, Any]) -> bytes:
     # Slide 1: Title Slide
     title_slide_layout = prs.slide_layouts[0]
     slide = prs.slides.add_slide(title_slide_layout)
-    title = slide.shapes.title
-    subtitle = slide.placeholders[1]
-    title.text = "VERITAS Automated Study Report"
-    subtitle.text = (
+    slide.shapes.title.text = "VERITAS Automated Study Report"
+    slide.placeholders[1].text = (
         f"Study ID: {report_data.get('study_id', 'N/A')}\n"
         f"Generated on: {datetime.now().strftime('%Y-%m-%d')}"
     )
 
     # Slide 2: Summary Statistics
-    if report_data['sections_config'].get('include_summary_stats'):
-        content_slide_layout = prs.slide_layouts[5]
+    if report_data.get('sections_config', {}).get('include_summary_stats'):
+        content_slide_layout = prs.slide_layouts[5] # Title and Content layout
         slide = prs.slides.add_slide(content_slide_layout)
         slide.shapes.title.text = "Summary Statistics"
         df = report_data.get('data')
@@ -236,19 +230,19 @@ def generate_ppt_report(report_data: Dict[str, Any]) -> bytes:
         if df is not None and cqa:
             summary_stats = df[cqa].describe().round(3).reset_index()
             summary_stats.columns = ['Statistic', 'Value']
-            _add_table_to_slide(slide, summary_stats, Inches(1), Inches(1.5), Inches(8), Inches(3))
+            _add_table_to_slide(slide, summary_stats, Inches(1), Inches(1.5), Inches(8), Inches(4))
 
     # Slide 3: Primary Plot
     fig = report_data.get('plot_fig')
-    if fig:
+    if fig and report_data.get('sections_config', {}).get('include_cpk_analysis'):
         content_slide_layout = prs.slide_layouts[5]
         slide = prs.slides.add_slide(content_slide_layout)
         slide.shapes.title.text = fig.layout.title.text or "Analysis Chart"
         img_bytes = fig.to_image(format="png", width=800, height=450, scale=2)
         img_stream = io.BytesIO(img_bytes)
-        slide.shapes.add_picture(img_stream, Inches(1), Inches(1.5), width=Inches(8))
+        slide.shapes.add_picture(img_stream, Inches(0.5), Inches(1.5), width=Inches(9))
 
-    # Save presentation to a byte stream
+    # Save presentation to a byte stream to be returned
     pptx_io = io.BytesIO()
     prs.save(pptx_io)
     pptx_io.seek(0)
