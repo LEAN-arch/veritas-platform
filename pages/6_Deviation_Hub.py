@@ -1,4 +1,4 @@
-# pages/5_Deviation_Hub.py
+# pages/6_Deviation_Hub.py
 
 import streamlit as st
 import pandas as pd
@@ -39,6 +39,7 @@ def render_detail_view(manager, dev_id: str):
         linked_record = dev['linked_record']
         hplc_data = utils.get_cached_data('hplc')
         
+        # Search across multiple potential columns for the linked record
         sample_match = hplc_data[hplc_data['sample_id'] == linked_record]
         instrument_match = hplc_data[hplc_data['instrument_id'] == linked_record]
         
@@ -59,19 +60,19 @@ def render_detail_view(manager, dev_id: str):
             if rca_submitted:
                 # In a real app, this would call a manager method to update the backend
                 # manager.update_deviation_rca(dev_id, rca_problem, rca_5whys)
-                st.success("RCA details saved.")
+                st.success("RCA details saved (simulation).")
 
     with capa_tab:
         st.subheader("Corrective and Preventive Action (CAPA) Plan", anchor=False)
         with st.form("capa_form"):
             capa_corrective = st.text_area("Corrective Action(s):", value=dev.get('capa_corrective', ''))
             capa_preventive = st.text_area("Preventive Action(s):", value=dev.get('capa_preventive', ''))
-            capa_date = st.date_input("Target Completion Date:", value=date.today())
+            capa_date = st.date_input("Target Completion Date:", value=pd.to_datetime(dev.get('capa_date', date.today())))
             capa_submitted = st.form_submit_button("💾 Save CAPA Plan")
             if capa_submitted:
                 # In a real app, this would call a manager method to update the backend
                 # manager.update_deviation_capa(...)
-                st.success("CAPA plan saved.")
+                st.success("CAPA plan saved (simulation).")
 
 def render_kanban_view(manager, dev_config):
     """Renders the main Kanban board of all deviations."""
@@ -79,6 +80,7 @@ def render_kanban_view(manager, dev_config):
     st.markdown("An interactive Kanban board to manage the lifecycle of quality events.")
     
     kanban_cols = st.columns(len(dev_config.kanban_states))
+    # Fetch a fresh copy of data for the view
     deviations_df = utils.get_cached_data('deviations')
 
     for i, status in enumerate(dev_config.kanban_states):
@@ -90,7 +92,8 @@ def render_kanban_view(manager, dev_config):
             if cards_in_column.empty:
                 st.info(f"No deviations in this status.")
             
-            for _, card in cards_in_column.iterrows():
+            # Sort cards for consistent display order
+            for _, card in cards_in_column.sort_values(by='id').iterrows():
                 card_id = card['id']
                 with st.container(border=True):
                     st.markdown(f"**{card_id}**: {card['title']}")
@@ -103,14 +106,17 @@ def render_kanban_view(manager, dev_config):
                             st.session_state.selected_dev_id = card_id
                             st.rerun()
                     with c2:
+                        # The last column has no "Advance" button
                         if status != dev_config.kanban_states[-1]:
                             if st.button("▶️ Advance", key=f"adv_{card_id}", help=f"Move to next stage", use_container_width=True):
                                 try:
+                                    # Delegate status change to the session manager
                                     manager.advance_deviation_status(
                                         dev_id=card_id,
                                         current_status=status,
                                         username=st.session_state.username
                                     )
+                                    # Rerun to reflect the change immediately
                                     st.rerun()
                                 except Exception as e:
                                     logger.error(f"Failed to advance deviation {card_id}: {e}", exc_info=True)
@@ -123,9 +129,11 @@ def main():
     try:
         manager = utils.initialize_page("Deviation Hub", "📌")
         
+        # Initialize page-specific session state if not present
         if 'selected_dev_id' not in st.session_state:
             st.session_state.selected_dev_id = None
 
+        # Route to the correct view based on session state
         if st.session_state.selected_dev_id:
             render_detail_view(manager, st.session_state.selected_dev_id)
         else:
