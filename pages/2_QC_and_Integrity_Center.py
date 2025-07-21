@@ -154,9 +154,8 @@ def main():
     """
     The main function for the page, ensuring correct initialization and flow.
     """
-    # ARCHITECTURAL FIX: All page logic is inside main().
-    # The call to initialize_page handles everything: page config, login check, and role authorization.
     try:
+        # ARCHITECTURAL FIX: This single call handles page config, login check, and role authorization.
         manager = utils.initialize_page("QC & Integrity Center", "🧪")
 
         # Initialize page-specific state directly in st.session_state
@@ -175,7 +174,6 @@ def main():
             st.stop()
 
         st.sidebar.subheader("Data Selection", divider='blue')
-        # Use .tolist() for better performance and to avoid potential issues with numpy arrays in selectbox
         study_id_options = sorted(hplc_data['study_id'].unique().tolist())
         if not study_id_options:
             st.warning("No studies available for analysis.")
