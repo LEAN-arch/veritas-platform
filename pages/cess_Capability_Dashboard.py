@@ -1,4 +1,4 @@
-# pages/2_Process_Capability_Dashboard.py
+# pages/3_Process_Capability_Dashboard.py
 
 import streamlit as st
 import pandas as pd
@@ -35,16 +35,23 @@ def render_capability_charts_tab(manager, filtered_df: pd.DataFrame, deviations_
             key="cpk_cqa"
         )
     with col2:
-        default_lsl = cpk_config.spec_limits[selected_cqa].lsl
-        default_usl = cpk_config.spec_limits[selected_cqa].usl
+        # Safely access spec limits
+        spec_limit_info = cpk_config.spec_limits.get(selected_cqa)
+        if spec_limit_info:
+            default_lsl = spec_limit_info.lsl
+            default_usl = spec_limit_info.usl
+        else:
+            default_lsl, default_usl = 0.0, 0.0
+            st.warning(f"No spec limits defined for {selected_cqa} in config.")
+
         st.write("**Interactive Specification Limits (for 'What-If' Analysis):**")
         lsl_col, usl_col = st.columns(2)
         lsl = lsl_col.number_input("Lower Spec Limit (LSL)", value=float(default_lsl), format="%.2f", step=0.1, key="cpk_lsl")
         usl = usl_col.number_input("Upper Spec Limit (USL)", value=float(default_usl), format="%.2f", step=0.1, key="cpk_usl")
 
-    if lsl >= usl:
+    if lsl is not None and usl is not None and lsl >= usl:
         st.error("Lower Specification Limit (LSL) must be less than Upper Specification Limit (USL).")
-        return
+        st.stop()
 
     st.markdown("---")
     
@@ -89,6 +96,7 @@ def render_anova_tab(filtered_df: pd.DataFrame, cpk_config):
         group_col = st.selectbox("Select Grouping Factor:", options=group_options, key="anova_group")
     
     if st.button("🔬 Run ANOVA Analysis", type="primary"):
+        # Clear previous results from state
         st.session_state.anova_results, st.session_state.tukey_results = None, None
         
         if filtered_df[group_col].nunique() < 2:
@@ -98,6 +106,7 @@ def render_anova_tab(filtered_df: pd.DataFrame, cpk_config):
                 anova_results = analytics.perform_anova(filtered_df, value_col, group_col)
                 st.session_state.anova_results = anova_results
                 
+                # Run Tukey test only if ANOVA is significant and there are more than 2 groups
                 if anova_results.get('p_value', 1.0) <= 0.05 and filtered_df[group_col].nunique() > 2:
                     tukey_results = analytics.perform_tukey_hsd(filtered_df, value_col, group_col)
                     st.session_state.tukey_results = tukey_results
@@ -158,13 +167,13 @@ def main():
             st.stop()
 
         st.sidebar.subheader("Filter Data", divider='blue')
-        study_options = sorted(hplc_data['study_id'].unique())
+        study_options = sorted(hplc_data['study_id'].unique().tolist())
         if not study_options:
             st.warning("No studies available for analysis.")
             st.stop()
             
         study_filter = st.sidebar.multiselect("Filter by Study:", options=study_options, default=[study_options[0]])
-        instrument_options = ['All'] + sorted(hplc_data['instrument_id'].unique())
+        instrument_options = ['All'] + sorted(hplc_data['instrument_id'].unique().tolist())
         instrument_filter = st.sidebar.selectbox("Filter by Instrument:", options=instrument_options)
 
         if not study_filter:
