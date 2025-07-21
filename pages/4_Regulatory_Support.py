@@ -1,10 +1,10 @@
-# pages/4_Regulatory_support.py
+# pages/4_Regulatory_Support.py
 
 import streamlit as st
 import pandas as pd
 import logging
 
-# Import from the new centralized location
+# All imports should be from the new, professional structure.
 from src.veritas.ui import utils, auth
 from src.veritas.engine import reporting, analytics
 
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # --- UI Rendering Functions ---
 
-def render_report_configuration(hplc_data: pd.DataFrame, manager):
+def render_report_configuration(hplc_data: pd.DataFrame):
     """Renders the configuration section for the report."""
     st.header("1. Configure Report Content")
     col1, col2 = st.columns(2)
@@ -25,13 +25,10 @@ def render_report_configuration(hplc_data: pd.DataFrame, manager):
     with col2:
         st.write("**Select sections to include in the report:**")
         sections = {
-            'include_summary_stats': st.checkbox("Summary Statistics Table", value=True),
-            'include_cpk_analysis': st.checkbox("Process Capability Plot", value=True),
-            'include_control_chart': st.checkbox("Process Stability Control Chart", value=False),
-            'include_full_dataset': st.checkbox("Full Dataset (Appendix)", value=False),
-            'include_audit_trail': st.checkbox("Audit Trail for Selected Data", value=True)
+            'include_summary_stats': st.checkbox("Summary Statistics Table", value=True, key="cfg_summary"),
+            'include_cpk_analysis': st.checkbox("Process Capability Plot", value=True, key="cfg_cpk"),
+            'include_full_dataset': st.checkbox("Full Dataset (Appendix)", value=False, key="cfg_fulldata"),
         }
-        # Store in session state for later use
         st.session_state.sections_config = sections
 
 def render_commentary_and_generation(manager):
@@ -59,16 +56,13 @@ def render_commentary_and_generation(manager):
                 report_df = report_df[report_df['study_id'] == st.session_state.selected_study]
                 
                 params = {
-                    'report_df': report_df,
-                    'study_id': st.session_state.selected_study,
-                    'report_format': st.session_state.report_format,
-                    'cqa': st.session_state.selected_cqa,
-                    'sections_config': st.session_state.sections_config,
-                    'commentary': st.session_state.commentary
+                    'report_df': report_df, 'study_id': st.session_state.selected_study,
+                    'report_format': st.session_state.report_format, 'cqa': st.session_state.selected_cqa,
+                    'sections_config': st.session_state.sections_config, 'commentary': st.session_state.commentary
                 }
                 
                 draft_report = manager.generate_draft_report(params)
-                st.session_state.draft_report = draft_report # Store the generated artifact
+                st.session_state.draft_report = draft_report
                 st.success(f"DRAFT {st.session_state.report_format} report generated successfully.")
             except Exception as e:
                 logger.error(f"Failed to generate draft report: {e}", exc_info=True)
@@ -98,33 +92,30 @@ def render_signing_and_locking(manager):
         st.subheader("21 CFR Part 11 Electronic Signature", anchor=False)
         st.text_input("Username", value=st.session_state.username, disabled=True)
         password_input = st.text_input("Password", type="password")
-        auth_code_input = st.text_input("2FA Authentication Code", help="Enter the 6-digit code from your authenticator app.")
         signing_reason = st.selectbox("Reason for Signing:", options=["Author Approval", "Technical Review", "QA Final Approval"])
         
         submitted = st.form_submit_button("Sign and Lock Report")
         if submitted:
-            if not password_input or not auth_code_input:
-                st.error("Password and 2FA code are required.")
+            if not password_input:
+                st.error("Password is required.")
             elif not auth.verify_credentials(st.session_state.username, password_input):
                  st.error("Authentication failed. Please check your credentials.")
             else:
                 with st.spinner("Applying secure signature and finalizing report..."):
                     try:
-                        # Pass the necessary data to the manager method
                         final_report_artifact = manager.finalize_and_sign_report(
                             draft_report_data=draft_report['report_data'],
                             signing_reason=signing_reason,
                             username=st.session_state.username
                         )
                         st.session_state.final_report = final_report_artifact
-                        st.session_state.draft_report = None # Clear the draft
+                        st.session_state.draft_report = None
                         st.success(f"Report **{final_report_artifact['filename']}** has been successfully signed and locked.")
                         st.balloons()
                     except Exception as e:
                         logger.error(f"Failed to sign and lock report: {e}", exc_info=True)
                         st.error(f"Failed to sign and lock report: {e}")
 
-    # Display final download button if a final report exists
     final_report = st.session_state.get('final_report')
     if final_report:
         st.download_button(
@@ -135,33 +126,38 @@ def render_signing_and_locking(manager):
             type="primary"
         )
 
-# --- Main Page Logic ---
 def main():
-    """Main function to render the Regulatory Support & Report Assembler page."""
-    manager = utils.initialize_page("Regulatory Support", "📄")
+    """
+    The main function for the page, ensuring correct initialization and flow.
+    """
+    try:
+        manager = utils.initialize_page("Regulatory Support", "📄")
 
-    # Initialize page-specific state
-    if 'draft_report' not in st.session_state:
-        st.session_state.draft_report = None
-    if 'final_report' not in st.session_state:
-        st.session_state.final_report = None
+        if 'draft_report' not in st.session_state:
+            st.session_state.draft_report = None
+        if 'final_report' not in st.session_state:
+            st.session_state.final_report = None
+            
+        st.title("📄 Regulatory Support & Report Assembler")
+        st.markdown("Compile data summaries and generate formatted, e-signed reports for submissions.")
+        st.markdown("---")
+
+        hplc_data = utils.get_cached_data('hplc')
+        if hplc_data.empty:
+            st.error("HPLC data could not be loaded. This page requires HPLC data to function.")
+            st.stop()
         
-    st.title("📄 Regulatory Support & Report Assembler")
-    st.markdown("Compile data summaries and generate formatted, e-signed reports for submissions.")
-    st.markdown("---")
+        render_report_configuration(hplc_data)
+        st.markdown("---")
+        render_commentary_and_generation(manager)
+        render_signing_and_locking(manager)
 
-    hplc_data = utils.get_cached_data('hplc')
-    if hplc_data.empty:
-        st.error("HPLC data could not be loaded. This page requires HPLC data to function.")
-        st.stop()
-    
-    # Render the workflow steps
-    render_report_configuration(hplc_data, manager)
-    st.markdown("---")
-    render_commentary_and_generation(manager)
-    render_signing_and_locking(manager)
+        auth.display_compliance_footer()
 
-    auth.display_compliance_footer()
+    except Exception as e:
+        logger.error(f"An error occurred on the Regulatory Support page: {e}", exc_info=True)
+        st.error("An unexpected error occurred. Please contact support.")
+
 
 if __name__ == "__main__":
     main()
