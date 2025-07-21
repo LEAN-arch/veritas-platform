@@ -1,10 +1,10 @@
-# pages/3_Stability_Dashboard.py
+# pages/3_Stability_Program_Dashboard.py
 
 import streamlit as st
 import pandas as pd
 import logging
 
-# Import from the new centralized location
+# All imports should be from the new, professional structure.
 from src.veritas.ui import utils, auth
 from src.veritas.engine import analytics, plotting
 
@@ -44,7 +44,6 @@ def render_poolability_assessment(filtered_df: pd.DataFrame, stability_config):
                 logger.error(f"ANCOVA test failed for assay '{assay}': {e}", exc_info=True)
                 st.session_state.poolability_results[assay] = {'poolable': False, 'reason': f'Test failed: {e}'}
 
-    # Display the results from the session state
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Purity Poolability")
@@ -82,18 +81,14 @@ def render_stability_profile(filtered_df: pd.DataFrame, stability_config):
     
     col1, col2 = st.columns(2)
     
-    # Purity Plot
     with col1:
         assay_purity = 'purity'
         if assay_purity in stability_config.spec_limits and assay_purity in filtered_df.columns:
-            use_pooled_purity = poolability_results.get(assay_purity, {}).get('poolable', False)
-            title = f"Purity Trend {'(Pooled Data)' if use_pooled_purity else '(Separate Lots)'}"
+            use_pooled_purity = poolability_results.get(assay_purity, {}).get('poolable', False) if len(lot_filter) > 1 else True
+            title = f"Purity Trend {'(Pooled)' if use_pooled_purity else '(Separate Lots)'}"
             
             projection = analytics.calculate_stability_projection(filtered_df, assay_purity, use_pooled_purity)
-            fig = plotting.plot_stability_trend(
-                filtered_df, assay_purity, title,
-                stability_config.spec_limits[assay_purity], projection
-            )
+            fig = plotting.plot_stability_trend(filtered_df, assay_purity, title, stability_config.spec_limits[assay_purity], projection)
             st.plotly_chart(fig, use_container_width=True)
             
             if projection:
@@ -101,18 +96,14 @@ def render_stability_profile(filtered_df: pd.DataFrame, stability_config):
         else:
             st.info("Purity data or specification limits not available for trend analysis.")
 
-    # Main Impurity Plot
     with col2:
         assay_impurity = 'main_impurity'
         if assay_impurity in stability_config.spec_limits and assay_impurity in filtered_df.columns:
-            use_pooled_impurity = poolability_results.get(assay_impurity, {}).get('poolable', False)
-            title = f"Main Impurity Trend {'(Pooled Data)' if use_pooled_impurity else '(Separate Lots)'}"
+            use_pooled_impurity = poolability_results.get(assay_impurity, {}).get('poolable', False) if len(lot_filter) > 1 else True
+            title = f"Main Impurity Trend {'(Pooled)' if use_pooled_impurity else '(Separate Lots)'}"
             
             projection = analytics.calculate_stability_projection(filtered_df, assay_impurity, use_pooled_impurity)
-            fig = plotting.plot_stability_trend(
-                filtered_df, assay_impurity, title,
-                stability_config.spec_limits[assay_impurity], projection
-            )
+            fig = plotting.plot_stability_trend(filtered_df, assay_impurity, title, stability_config.spec_limits[assay_impurity], projection)
             st.plotly_chart(fig, use_container_width=True)
             
             if projection:
@@ -120,72 +111,71 @@ def render_stability_profile(filtered_df: pd.DataFrame, stability_config):
         else:
             st.info("Main Impurity data or specification limits not available for trend analysis.")
 
-# --- Main Page Logic ---
 def main():
-    """Main function to render the Stability Program Dashboard page."""
-    manager = utils.initialize_page("Stability Dashboard", "⏳")
-    
-    # Initialize page-specific state
-    if 'poolability_results' not in st.session_state:
-        st.session_state.poolability_results = {}
-
-    st.title("⏳ Stability Program Dashboard")
-    st.markdown("Monitor stability data, project shelf-life with statistical confidence, and perform multi-lot poolability analysis for regulatory submissions.")
-
-    # --- Data Loading & Filtering ---
-    stability_data = utils.get_cached_data('stability')
-    if stability_data.empty:
-        st.error("Stability data could not be loaded. This page requires stability data to function.")
-        st.stop()
-
-    st.sidebar.subheader("Select Stability Study", divider='blue')
-    product_options = sorted(stability_data['product_id'].unique())
-    if not product_options:
-        st.warning("No products available for analysis.")
-        st.stop()
-
-    product_filter = st.sidebar.selectbox("Select Product:", options=product_options)
-    
-    lot_options = sorted(stability_data[stability_data['product_id'] == product_filter]['lot_id'].unique())
-    if not lot_options:
-        st.warning(f"No lots available for product '{product_filter}'.")
-        st.stop()
+    """
+    The main function for the page, ensuring correct initialization and flow.
+    """
+    try:
+        manager = utils.initialize_page("Stability Dashboard", "⏳")
         
-    lot_filter = st.sidebar.multiselect(
-        "Select Lot(s):",
-        options=lot_options,
-        default=lot_options,
-        help="Select multiple lots to perform a poolability analysis."
-    )
+        if 'poolability_results' not in st.session_state:
+            st.session_state.poolability_results = {}
 
-    if not lot_filter:
-        st.warning("Please select at least one lot to begin analysis.")
-        st.stop()
+        st.title("⏳ Stability Program Dashboard")
+        st.markdown("Monitor stability data, project shelf-life with statistical confidence, and perform multi-lot poolability analysis for regulatory submissions.")
 
-    filtered_df = stability_data[
-        (stability_data['product_id'] == product_filter) & 
-        (stability_data['lot_id'].isin(lot_filter))
-    ]
-    
-    if filtered_df.empty:
-        st.warning("No stability data available for the selected product and lot combination.")
-        st.stop()
+        stability_data = utils.get_cached_data('stability')
+        if stability_data.empty:
+            st.error("Stability data could not be loaded. This page requires stability data to function.")
+            st.stop()
 
-    # --- Page Content Rendering ---
-    st.markdown("---")
-    
-    # If more than one lot is selected, show the poolability assessment
-    if len(lot_filter) > 1:
-        render_poolability_assessment(filtered_df, manager.settings.app.stability_specs)
+        st.sidebar.subheader("Select Stability Study", divider='blue')
+        product_options = sorted(stability_data['product_id'].unique())
+        if not product_options:
+            st.warning("No products available for analysis.")
+            st.stop()
+
+        product_filter = st.sidebar.selectbox("Select Product:", options=product_options, key="stability_product")
+        
+        lot_options = sorted(stability_data[stability_data['product_id'] == product_filter]['lot_id'].unique())
+        if not lot_options:
+            st.warning(f"No lots available for product '{product_filter}'.")
+            st.stop()
+            
+        lot_filter = st.sidebar.multiselect(
+            "Select Lot(s):", options=lot_options, default=lot_options,
+            help="Select multiple lots to perform a poolability analysis.", key="stability_lots"
+        )
+
+        if not lot_filter:
+            st.warning("Please select at least one lot to begin analysis.")
+            st.stop()
+
+        filtered_df = stability_data[
+            (stability_data['product_id'] == product_filter) & 
+            (stability_data['lot_id'].isin(lot_filter))
+        ]
+        
+        if filtered_df.empty:
+            st.warning("No stability data available for the selected product and lot combination.")
+            st.stop()
+
         st.markdown("---")
+        
+        if len(lot_filter) > 1:
+            render_poolability_assessment(filtered_df, manager.settings.app.stability_specs)
+            st.markdown("---")
 
-    render_stability_profile(filtered_df, manager.settings.app.stability_specs)
+        render_stability_profile(filtered_df, manager.settings.app.stability_specs)
 
-    with st.expander("Show Raw Stability Data for Selected Lots"):
-        st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+        with st.expander("Show Raw Stability Data for Selected Lots"):
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
 
-    auth.display_compliance_footer()
+        auth.display_compliance_footer()
 
+    except Exception as e:
+        logger.error(f"An error occurred on the Stability Program Dashboard page: {e}", exc_info=True)
+        st.error("An unexpected error occurred. Please contact support.")
 
 if __name__ == "__main__":
     main()
