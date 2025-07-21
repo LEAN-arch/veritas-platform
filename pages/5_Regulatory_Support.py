@@ -6,7 +6,6 @@ import logging
 
 # All imports should be from the new, professional structure.
 from src.veritas.ui import utils, auth
-from src.veritas.engine import reporting, analytics
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +65,7 @@ def render_commentary_and_generation(manager):
                 # Delegate generation to the session manager
                 draft_report = manager.generate_draft_report(params)
                 st.session_state.draft_report = draft_report
+                st.session_state.final_report = None # Clear any old final report
                 st.success(f"DRAFT {st.session_state.report_format} report generated successfully.")
             except Exception as e:
                 logger.error(f"Failed to generate draft report: {e}", exc_info=True)
@@ -89,6 +89,11 @@ def render_signing_and_locking(manager):
         mime=draft_report['mime']
     )
     
+    # E-signing is only available for PDF format in this implementation
+    if st.session_state.report_format != 'PDF':
+        st.warning("Electronic signing is only available for PDF reports.")
+        return
+
     st.warning("⚠️ **Action Required:** This report is a **DRAFT** and is not valid for submission until it is electronically signed.")
     
     with st.form("e_signature_form"):
