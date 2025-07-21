@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import pytest
 
-# The sys.path hack is no longer needed. Imports are now direct and clean.
+# The conftest.py file makes these imports work without sys.path hacks.
 from veritas.engine import analytics
 
 # --- Tests for calculate_cpk ---
@@ -44,10 +44,15 @@ def test_calculate_cpk_with_single_sided_lsl():
     cpk = analytics.calculate_cpk(data, lsl, usl)
     assert cpk == pytest.approx(cpl)
 
+def test_calculate_cpk_no_spec_limits():
+    """Test Cpk when no spec limits are provided; should be infinite."""
+    data = pd.Series([10, 11, 12, 10.5, 11.5])
+    assert analytics.calculate_cpk(data, None, None) == np.inf
+
 def test_calculate_cpk_edge_cases():
     """Test edge cases like empty data, insufficient data, or zero standard deviation."""
-    assert analytics.calculate_cpk(pd.Series([]), 0, 10) == 0.0
-    assert analytics.calculate_cpk(pd.Series([5.0]), 0, 10) == 0.0 # Insufficient data
+    assert analytics.calculate_cpk(pd.Series([], dtype=float), 0, 10) == 0.0
+    assert analytics.calculate_cpk(pd.Series([5.0]), 0, 10) == 0.0 # Insufficient data (<2 points)
     assert analytics.calculate_cpk(pd.Series([5, 5, 5]), 0, 10) == 0.0 # Zero std dev
 
 # --- Tests for ANOVA and Post-Hoc (Tukey's HSD) ---
@@ -75,7 +80,7 @@ def test_perform_anova_with_no_significant_difference():
 def test_perform_tukey_hsd_on_mock_data(hplc_data):
     """
     Test the Tukey HSD function using realistic mock data from the fixture.
-    This serves as an integration test for the function.
+    This serves as an integration test for the function with designed data.
     """
     # The mock data was specifically designed so HPLC-03 has a purity drift
     results = analytics.perform_tukey_hsd(hplc_data, 'purity', 'instrument_id')
@@ -89,27 +94,26 @@ def test_perform_tukey_hsd_on_mock_data(hplc_data):
         ((results.group1 == 'HPLC-03') & (results.group2 == 'HPLC-01'))
     ]
     assert not hplc03_vs_hplc01.empty
-    assert hplc03_vs_hplc01['reject'].iloc[0] is True # Note: checking `is True` is more explicit than `== True`
+    # The 'reject' column from statsmodels can be boolean or object, so check for True value
+    assert hplc03_vs_hplc01['reject'].iloc[0] == True
 
 # --- Tests for Stability Poolability (ANCOVA) ---
 
-def test_stability_poolability_when_lots_are_similar():
+def test_stability_poolability_when_lots_are_similar(stability_data):
     """Test the case where lots have similar degradation slopes and should be poolable."""
     # Create two lots with very similar degradation profiles
     lot1 = pd.DataFrame({'lot_id': 'L1', 'timepoint_months': [0, 6, 12], 'purity': [99.5, 99.2, 98.9]})
     lot2 = pd.DataFrame({'lot_id': 'L2', 'timepoint_months': [0, 6, 12], 'purity': [99.4, 99.1, 98.8]})
-    test_df = pd.concat([lot1, lot2])
+    test_df = pd.concat([lot1, lot2], ignore_index=True)
     
     result = analytics.test_stability_poolability(test_df, 'purity')
     assert result['poolable'] is True
     assert result['p_value'] > 0.05
 
-def test_stability_poolability_when_lots_are_different():
-    """Test the case where lots have different degradation slopes and should not be pooled."""
-    # Create two lots with very different degradation profiles
-    lot1 = pd.DataFrame({'lot_id': 'L1', 'timepoint_months': [0, 6, 12], 'purity': [99.5, 99.2, 98.9]}) # Slow degrader
-    lot2 = pd.DataFrame({'lot_id': 'L2', 'timepoint_months': [0, 6, 12], 'purity': [99.5, 98.5, 97.5]}) # Fast degrader
-    test_df = pd.concat([lot1, lot2])
+def test_stability_poolability_when_lots_are_different(stability_data):
+    """Test the case where lots have different degradation slopes and should NOT be pooled."""
+    # The fixture data is designed such that LOTA-002 degrades faster than LOTA-001
+    test_df = stability_data[stability_data['product_id'] == 'PRODA']
     
     result = analytics.test_stability_poolability(test_df, 'purity')
     assert result['poolable'] is False
@@ -118,15 +122,31 @@ def test_stability_poolability_when_lots_are_different():
 # --- Tests for Anomaly Detection ---
 
 def test_run_anomaly_detection():
-    """Test the Isolation Forest anomaly detection engine."""
+    """Test the Isolation Forest anomaly detection engine with a clear outlier."""
     # Create a dataset with a clear outlier
     data = pd.DataFrame({
-        'x': [1, 1.1, 0.9, 1.2, 0.8, 10], # 10 is the outlier
-        'y': [2, 2.1, 1.9, 2.2, 1.8, 20]  # 20 is the outlier
+        'x': [1.0, 1.1, 0.9, 1.2, 0.8, 10.0], # 10 is the outlier
+        'y': [2.0, 2.1, 1.9, 2.2, 1.8, 20.0]  # 20 is the outlier
     })
     
-    predictions, fitted_data = analytics.run_anomaly_detection(data, ['x', 'y'], contamination=0.17) # 1/6 = ~0.17
+    # Contamination is 1 outlier / 6 total points
+    predictions, fitted_data = analytics.run_anomaly_detection(data, ['x', 'y'], contamination=1/6)
     
     assert len(predictions) == len(data)
-    assert predictions[-1] == -1 # The last point should be flagged as an anomaly
-    assert np.all(predictions[:-1] == 1) # All other points should be inliers
+    assert predictions[-1] == -1 # The last point should be flagged as an anomaly (-1)
+    assert np.all(predictions[:-1] == 1) # All other points should be inliers (1)
+    assert len(fitted_data) == len(data)
+
+def test_run_anomaly_detection_with_nan():
+    """Test that anomaly detection correctly handles and ignores NaN values."""
+    data = pd.DataFrame({
+        'x': [1.0, 1.1, np.nan, 1.2, 0.8, 10.0],
+        'y': [2.0, 2.1, 1.9, 2.2, 1.8, 20.0]
+    })
+    
+    # Contamination is 1 outlier / 5 valid points
+    predictions, fitted_data = analytics.run_anomaly_detection(data, ['x', 'y'], contamination=1/5)
+    
+    assert len(predictions) == 5 # Should only be 5 predictions on the non-NaN data
+    assert len(fitted_data) == 5 # The returned dataframe should not have NaNs
+    assert -1 in predictions # Anomaly should still be found
