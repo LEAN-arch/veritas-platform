@@ -1,4 +1,4 @@
-## pages/3_Process_Capability_Dashboard.py
+# pages/3_Process_Capability_Dashboard.py
 
 import streamlit as st
 import pandas as pd
