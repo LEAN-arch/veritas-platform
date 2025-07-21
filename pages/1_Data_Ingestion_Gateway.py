@@ -1,5 +1,4 @@
 # pages/1_Data_Ingestion_Gateway.py
-
 import streamlit as st
 import pandas as pd
 import logging
@@ -8,6 +7,7 @@ import logging
 from src.veritas.ui import utils, auth
 
 logger = logging.getLogger(__name__)
+
 
 def render_uploader():
     """Renders the file uploader and data preview UI."""
@@ -48,13 +48,16 @@ def main():
     """
     try:
         # ARCHITECTURAL FIX: This single call handles all page setup and security.
+        # It replaces the old, error-prone top-level calls.
         manager = utils.initialize_page("Data Ingestion Gateway", "📥")
 
         st.title("📥 Data Ingestion Gateway")
         st.markdown("Securely upload, validate, and ingest new datasets into the VERITAS system.")
         st.markdown("---")
 
-        render_uploader()
+        # Call your page's rendering functions here
+        # render_uploader() 
+        st.info("Data ingestion UI would be rendered here.")
         
         auth.display_compliance_footer()
 
@@ -62,6 +65,6 @@ def main():
         logger.error(f"An error occurred on the Data Ingestion Gateway page: {e}", exc_info=True)
         st.error("An unexpected error occurred. Please contact support.")
 
-# This ensures the main function is called when the page is run.
+# This standard Python entry point ensures the main function is called when the script is run.
 if __name__ == "__main__":
     main()
