@@ -38,7 +38,6 @@ def render_login_page():
 
 def render_mission_control():
     """
-
     Renders the main "Mission Control" dashboard for an authenticated user.
     """
     # This call handles page config, auth, and returns the business logic controller
