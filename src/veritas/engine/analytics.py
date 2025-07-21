@@ -13,36 +13,39 @@ from typing import Dict, List, Tuple, Optional, Any
 
 def calculate_cpk(data_series: pd.Series, lsl: Optional[float], usl: Optional[float]) -> float:
     """
-    Calculate the Process Capability Index (Cpk), handling single-sided specs.
+    Calculate the Process Capability Index (Cpk), robustly handling single-sided specifications.
 
     Args:
         data_series (pd.Series): Data series for Cpk calculation (e.g., purity values).
-        lsl (Optional[float]): Lower specification limit. Can be None.
-        usl (Optional[float]): Upper specification limit. Can be None.
+        lsl (Optional[float]): Lower specification limit. Can be None for single-sided USL.
+        usl (Optional[float]): Upper specification limit. Can be None for single-sided LSL.
 
     Returns:
-        float: Cpk value, or 0.0 if calculation is not possible due to no variance or empty data.
+        float: Cpk value, or 0.0 if calculation is not possible due to no variance, empty data, or insufficient data.
     """
     if not isinstance(data_series, pd.Series):
         raise TypeError("data_series must be a pandas Series.")
 
     data_clean = data_series.dropna()
-    if data_clean.empty or len(data_clean) < 2:
+    if len(data_clean) < 2:
         return 0.0
         
     std_dev = data_clean.std()
+    # If there is no variation, the process is not a distribution, so capability is undefined (return 0).
     if std_dev == 0:
-        return 0.0 # No process variation, Cpk is effectively zero.
+        return 0.0
 
     mean = data_clean.mean()
     
     # Handle cases where one or both spec limits are None
     if usl is None and lsl is None:
-        return np.inf  # No limits, so capability is infinite
+        return np.inf  # No limits defined, so capability is theoretically infinite
 
+    # Calculate Cpu and Cpl. If a limit is not provided, its corresponding value is infinite.
     cpu = (usl - mean) / (3 * std_dev) if usl is not None else np.inf
     cpl = (mean - lsl) / (3 * std_dev) if lsl is not None else np.inf
     
+    # Cpk is the lesser of the two, representing the capability on the nearest side.
     return min(cpu, cpl)
 
 # --- Stability Analysis ---
@@ -67,36 +70,37 @@ def test_stability_poolability(df: pd.DataFrame, assay: str, time_col: str = 'ti
 
     df_clean = df[required_cols].dropna()
     if df_clean[group_col].nunique() < 2 or len(df_clean) < 4:
-        return {'poolable': True, 'p_value': 1.0, 'reason': 'Insufficient data for test (need >= 2 groups and >= 4 rows).'}
+        return {'poolable': True, 'p_value': 1.0, 'reason': 'Insufficient data for test (need >= 2 groups and >= 4 rows). Defaulting to poolable.'}
 
     try:
-        # Use statsmodels formula API for ANCOVA
-        # The interaction term `time_col:C(group_col)` tests for difference in slopes.
+        # Use statsmodels formula API for ANCOVA. The interaction term tests for difference in slopes.
+        # Backticks ` ` are used to safely handle column names with spaces or special characters.
         formula = f"`{assay}` ~ `{time_col}` * C(`{group_col}`)"
         model = ols(formula, data=df_clean).fit()
         anova_table = anova_lm(model, typ=2)
 
-        # The p-value for the interaction term is key. If it's not significant (>0.05), slopes are parallel.
-        interaction_p_value = anova_table["PR(>F)"][f"`{time_col}`:C(C(`{group_col}`))"]
+        # The p-value for the interaction term is key. If non-significant (>0.05), slopes are parallel.
+        interaction_term_name = f"`{time_col}`:C(`{group_col}`)"
+        interaction_p_value = anova_table["PR(>F)"][interaction_term_name]
 
         poolable = interaction_p_value > 0.05
         reason = "Interaction p-value > 0.05, slopes are not significantly different." if poolable else "Interaction p-value <= 0.05, slopes are significantly different."
         
         return {'poolable': poolable, 'p_value': interaction_p_value, 'reason': reason}
     except Exception as e:
-        return {'poolable': False, 'p_value': 0.0, 'reason': f'ANCOVA test failed: {e}'}
+        return {'poolable': False, 'p_value': 0.0, 'reason': f'ANCOVA test failed with an exception: {e}'}
 
 def calculate_stability_projection(df: pd.DataFrame, assay: str, use_pooled_data: bool) -> Dict:
     """
-    Perform linear regression on stability data to project trends.
+    Perform linear regression on stability data to project trends and calculate shelf life.
 
     Args:
         df (pd.DataFrame): Stability data with 'lot_id', 'timepoint_months', and assay columns.
         assay (str): Column name of the assay to analyze.
-        use_pooled_data (bool): If True, pools all data. If False, uses only the first lot.
+        use_pooled_data (bool): If True, pools all data. If False, uses data from the first lot only.
 
     Returns:
-        Dict: Dictionary containing regression results ('slope', 'intercept', etc.).
+        Dict: Dictionary containing regression results ('slope', 'intercept', etc.). Returns empty dict on failure.
     """
     required_cols = ['lot_id', 'timepoint_months', assay]
     if not all(col in df.columns for col in required_cols):
@@ -106,17 +110,14 @@ def calculate_stability_projection(df: pd.DataFrame, assay: str, use_pooled_data
     if len(df_clean) < 2:
         return {} # Not enough data for regression
 
-    target_df = df_clean
-    if not use_pooled_data:
-        first_lot = df_clean['lot_id'].unique()[0]
-        target_df = df_clean[df_clean['lot_id'] == first_lot]
-        if len(target_df) < 2:
-            return {} # Not enough data for regression on this lot
+    target_df = df_clean if use_pooled_data else df_clean[df_clean['lot_id'] == df_clean['lot_id'].unique()[0]]
+    if len(target_df) < 2:
+        return {} # Not enough data for regression on the selected lot
 
     try:
         slope, intercept, r_value, p_value, std_err = stats.linregress(target_df['timepoint_months'], target_df[assay])
 
-        # Create prediction line for plotting
+        # Create a prediction line for plotting purposes
         pred_x = np.array([target_df['timepoint_months'].min(), target_df['timepoint_months'].max()])
         pred_y = intercept + slope * pred_x
 
@@ -128,7 +129,6 @@ def calculate_stability_projection(df: pd.DataFrame, assay: str, use_pooled_data
     except Exception:
         return {}
 
-
 # --- Rule-Based QC Engine ---
 
 def apply_qc_rules(df: pd.DataFrame, rules_config: dict, app_config: Any) -> pd.DataFrame:
@@ -138,36 +138,36 @@ def apply_qc_rules(df: pd.DataFrame, rules_config: dict, app_config: Any) -> pd.
     Args:
         df (pd.DataFrame): DataFrame to check (e.g., HPLC data).
         rules_config (dict): Dictionary of rules to apply (e.g., {'check_nulls': True}).
-        app_config (Any): Application configuration with specification limits.
+        app_config (Any): Application configuration object with specification limits.
 
     Returns:
-        pd.DataFrame: A DataFrame of discrepancies found.
+        pd.DataFrame: A DataFrame of discrepancies found, or an empty DataFrame if none.
     """
     if not isinstance(df, pd.DataFrame):
         raise TypeError("df must be a pandas DataFrame.")
     if 'sample_id' not in df.columns:
-        raise ValueError("DataFrame must contain 'sample_id' column.")
+        raise ValueError("DataFrame must contain 'sample_id' column for reporting.")
 
     discrepancies = []
     
     # Rule 1: Check for critical missing values
     if rules_config.get('check_nulls'):
-        key_cols = app_config.process_capability.available_cqas
+        key_cols = [col for col in app_config.process_capability.available_cqas if col in df.columns]
         null_rows = df[df[key_cols].isnull().any(axis=1)]
         for _, row in null_rows.iterrows():
             null_cols = row[key_cols].index[row[key_cols].isnull()].tolist()
             discrepancies.append({
                 'sample_id': row['sample_id'], 'Issue': 'Missing Value',
-                'Details': f"Null value found in column(s): {', '.join(null_cols)}"
+                'Details': f"Null value in critical column(s): {', '.join(null_cols)}"
             })
     
-    # Rule 2: Check for impossible negative values
+    # Rule 2: Check for impossible negative values in specific columns
     if rules_config.get('check_negatives') and 'bio_activity' in df.columns:
         negative_rows = df[df['bio_activity'] < 0]
         for _, row in negative_rows.iterrows():
             discrepancies.append({
                 'sample_id': row['sample_id'], 'Issue': 'Impossible Negative Value',
-                'Details': f"bio_activity is {row['bio_activity']:.2f}, which is not possible."
+                'Details': f"bio_activity is {row['bio_activity']:.2f}, which is biologically impossible."
             })
 
     # Rule 3: Check against specification limits
@@ -176,14 +176,13 @@ def apply_qc_rules(df: pd.DataFrame, rules_config: dict, app_config: Any) -> pd.
             if cqa in df.columns:
                 oor_mask = (df[cqa] < specs.lsl if specs.lsl is not None else False) | \
                            (df[cqa] > specs.usl if specs.usl is not None else False)
-                for _, row in df[oor_mask].iterrows():
+                for _, row in df[oor_mask & df[cqa].notna()].iterrows():
                     discrepancies.append({
                         'sample_id': row['sample_id'], 'Issue': 'Out of Specification',
                         'Details': f"CQA '{cqa}' value of {row[cqa]:.2f} is outside spec limits (LSL: {specs.lsl}, USL: {specs.usl})."
                     })
 
     return pd.DataFrame(discrepancies) if discrepancies else pd.DataFrame()
-
 
 # --- Advanced Statistical Analysis ---
 
@@ -195,14 +194,14 @@ def perform_normality_test(data_series: pd.Series) -> Dict:
         data_series (pd.Series): Data series to test.
 
     Returns:
-        Dict: A dictionary with test results.
+        Dict: A dictionary with test results ('statistic', 'p_value', 'conclusion').
     """
     data_clean = data_series.dropna()
     if len(data_clean) < 3:
         return {'conclusion': 'Insufficient data (need >= 3 non-NaN values).'}
     
     stat, p_value = stats.shapiro(data_clean)
-    conclusion = "Data appears normal (p > 0.05)." if p_value > 0.05 else "Data is likely non-normal (p <= 0.05)."
+    conclusion = "Data appears to be normally distributed (p > 0.05)." if p_value > 0.05 else "Data is likely not normally distributed (p <= 0.05)."
     return {'statistic': stat, 'p_value': p_value, 'conclusion': conclusion}
 
 def perform_anova(df: pd.DataFrame, value_col: str, group_col: str) -> Dict:
@@ -215,12 +214,12 @@ def perform_anova(df: pd.DataFrame, value_col: str, group_col: str) -> Dict:
         group_col (str): The categorical column to group by.
 
     Returns:
-        Dict: A dictionary with test results.
+        Dict: A dictionary with test results ('f_statistic', 'p_value').
     """
     df_clean = df[[value_col, group_col]].dropna()
-    groups = [group_df[value_col] for _, group_df in df_clean.groupby(group_col)]
+    groups = [group_data[value_col] for _, group_data in df_clean.groupby(group_col)]
     if len(groups) < 2:
-        return {'reason': 'Insufficient data (need at least 2 groups).'}
+        return {'reason': 'Insufficient data (need at least 2 distinct groups).'}
     
     f_stat, p_value = stats.f_oneway(*groups)
     return {'f_statistic': f_stat, 'p_value': p_value}
@@ -242,8 +241,8 @@ def perform_tukey_hsd(df: pd.DataFrame, value_col: str, group_col: str) -> pd.Da
         return pd.DataFrame()
         
     tukey_result = pairwise_tukeyhsd(endog=df_clean[value_col], groups=df_clean[group_col], alpha=0.05)
-    return pd.DataFrame(data=tukey_result._results_table.data[1:], columns=tukey_result._results_table.data[0])
-
+    results_df = pd.DataFrame(data=tukey_result._results_table.data[1:], columns=tukey_result._results_table.data[0])
+    return results_df
 
 # --- Machine Learning Engine ---
 
@@ -259,12 +258,12 @@ def run_anomaly_detection(df: pd.DataFrame, cols: List[str], contamination: floa
 
     Returns:
         Tuple[np.ndarray, pd.DataFrame]: A tuple containing the predictions
-        (-1 for anomalies, 1 for inliers) and the input DataFrame that was fitted.
+        (-1 for anomalies, 1 for inliers) and the input DataFrame that was fitted (with no NaNs).
     """
     if not all(c in df.columns for c in cols):
         raise ValueError(f"DataFrame must contain all specified columns: {cols}")
     if not 0 < contamination < 0.5:
-        raise ValueError("Contamination must be between 0 and 0.5.")
+        raise ValueError("Contamination must be a float between 0 and 0.5.")
 
     data_to_fit = df[cols].dropna()
     if len(data_to_fit) < 2:
