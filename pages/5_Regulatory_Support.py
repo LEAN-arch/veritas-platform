@@ -1,4 +1,4 @@
-# pages/4_Regulatory_Support.py
+# pages/5_Regulatory_Support.py
 
 import streamlit as st
 import pandas as pd
@@ -18,7 +18,7 @@ def render_report_configuration(hplc_data: pd.DataFrame):
     col1, col2 = st.columns(2)
     
     with col1:
-        study_options = sorted(hplc_data['study_id'].unique())
+        study_options = sorted(hplc_data['study_id'].unique().tolist())
         st.selectbox("Select a Study:", options=study_options, key="selected_study")
         st.radio("Select Report Format:", options=['PDF', 'PowerPoint'], horizontal=True, key="report_format")
 
@@ -29,6 +29,7 @@ def render_report_configuration(hplc_data: pd.DataFrame):
             'include_cpk_analysis': st.checkbox("Process Capability Plot", value=True, key="cfg_cpk"),
             'include_full_dataset': st.checkbox("Full Dataset (Appendix)", value=False, key="cfg_fulldata"),
         }
+        # Store config in session state so other functions can access it
         st.session_state.sections_config = sections
 
 def render_commentary_and_generation(manager):
@@ -55,12 +56,14 @@ def render_commentary_and_generation(manager):
                 report_df = utils.get_cached_data('hplc')
                 report_df = report_df[report_df['study_id'] == st.session_state.selected_study]
                 
+                # Consolidate all parameters into a single dictionary
                 params = {
                     'report_df': report_df, 'study_id': st.session_state.selected_study,
                     'report_format': st.session_state.report_format, 'cqa': st.session_state.selected_cqa,
                     'sections_config': st.session_state.sections_config, 'commentary': st.session_state.commentary
                 }
                 
+                # Delegate generation to the session manager
                 draft_report = manager.generate_draft_report(params)
                 st.session_state.draft_report = draft_report
                 st.success(f"DRAFT {st.session_state.report_format} report generated successfully.")
@@ -103,13 +106,14 @@ def render_signing_and_locking(manager):
             else:
                 with st.spinner("Applying secure signature and finalizing report..."):
                     try:
+                        # Delegate finalization and signing to the session manager
                         final_report_artifact = manager.finalize_and_sign_report(
                             draft_report_data=draft_report['report_data'],
                             signing_reason=signing_reason,
                             username=st.session_state.username
                         )
                         st.session_state.final_report = final_report_artifact
-                        st.session_state.draft_report = None
+                        st.session_state.draft_report = None # Clear draft after signing
                         st.success(f"Report **{final_report_artifact['filename']}** has been successfully signed and locked.")
                         st.balloons()
                     except Exception as e:
@@ -133,6 +137,7 @@ def main():
     try:
         manager = utils.initialize_page("Regulatory Support", "📄")
 
+        # Initialize page-specific session state keys
         if 'draft_report' not in st.session_state:
             st.session_state.draft_report = None
         if 'final_report' not in st.session_state:
