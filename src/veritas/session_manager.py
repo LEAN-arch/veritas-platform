@@ -16,7 +16,7 @@ class SessionManager:
     This class is initialized once per user session and acts as the primary interface
     for the UI to interact with backend business logic and data. It is completely
     decoupled from the Streamlit UI (st) and operates on data it's given or
-    retrieves via its repository, making it highly testable.
+    retrieves via its repository, making it highly testable and maintainable.
     """
     def __init__(self, repository: MockDataRepository):
         """
@@ -24,9 +24,10 @@ class SessionManager:
 
         Args:
             repository (MockDataRepository): An instance of a data repository.
+                                             This can be swapped for a real DB repository.
         """
         self._repo = repository
-        self.settings = config.config  # Use the simplified config singleton
+        self.settings = config.config  # Use the imported config singleton
 
     def get_data(self, key: str) -> pd.DataFrame:
         """
@@ -48,26 +49,26 @@ class SessionManager:
             user_role (str): The role of the current user (e.g., 'QC Analyst').
 
         Returns:
-            List[Dict]: A list of action item dictionaries.
+            List[Dict]: A list of action item dictionaries for the UI to render.
         """
         items = []
-        if user_role == "QC Analyst" or user_role == "DTE Leadership":
+        if user_role in ["QC Analyst", "DTE Leadership"]:
             deviations_df = self.get_data('deviations')
             if not deviations_df.empty:
-                new_dev_count = len(deviations_df[deviations_df['status'] == 'Open'])
-                if new_dev_count > 0:
+                open_dev_count = len(deviations_df[deviations_df['status'] == 'Open'])
+                if open_dev_count > 0:
                     items.append({
                         "title": "New Deviations",
-                        "details": f"{new_dev_count} require review.",
+                        "details": f"{open_dev_count} require initial assessment.",
                         "icon": "📌",
-                        "page_link": "pages/5_Deviation_Hub.py"
+                        "page_link": "pages/6_Deviation_Hub.py"
                     })
-        # Add more role-based logic here if needed
+        # Extend with more role-based logic as needed
         return items
 
     def create_deviation_from_qc(self, report_df: pd.DataFrame, study_id: str, username: str) -> str:
         """
-        Creates a new deviation record based on a QC report.
+        Creates a new deviation record based on a QC report and logs the action.
 
         Args:
             report_df (pd.DataFrame): DataFrame of QC discrepancies.
@@ -78,17 +79,16 @@ class SessionManager:
             str: The ID of the newly created deviation.
         """
         if report_df.empty or not study_id or not username:
-            raise ValueError("report_df, study_id, and username must be provided.")
+            raise ValueError("report_df, study_id, and username must be provided and valid.")
 
         title = f"QC Discrepancies found in Study {study_id}"
-        # Create a unique identifier for the linked QC report artifact
         linked_record = f"QC_REPORT_{pd.Timestamp.now(tz='UTC').strftime('%Y%m%d%H%M%S')}"
         
         new_dev_id = self._repo.create_deviation(title, linked_record, "High")
         self._repo.write_audit_log(
             user=username,
             action="Deviation Created",
-            details=f"Created {new_dev_id} from QC Integrity Center for {study_id}.",
+            details=f"Auto-created {new_dev_id} from QC Integrity Center for study '{study_id}'.",
             record_id=new_dev_id
         )
         return new_dev_id
@@ -108,8 +108,7 @@ class SessionManager:
         
         current_index = states.index(current_status)
         if current_index + 1 >= len(states):
-            # Already in the final state, do nothing or raise error
-            raise ValueError(f"Cannot advance status: {current_status} is the final state.")
+            raise ValueError(f"Cannot advance status: '{current_status}' is the final state.")
 
         new_status = states[current_index + 1]
         self._repo.update_deviation_status(dev_id, new_status)
@@ -137,7 +136,7 @@ class SessionManager:
 
     def generate_draft_report(self, report_params: Dict) -> Dict:
         """
-        Generates a draft report (PDF or PPT) based on parameters.
+        Orchestrates the generation of a draft report (PDF or PPT).
 
         Args:
             report_params (Dict): A dictionary containing all necessary parameters,
@@ -158,9 +157,11 @@ class SessionManager:
             raise ValueError("One or more required parameters for report generation are missing.")
 
         # Prepare data for the reporting engine
-        specs = self.settings.app.process_capability.spec_limits
-        lsl = specs[cqa].lsl
-        usl = specs[cqa].usl
+        specs = self.settings.app.process_capability.spec_limits.get(cqa)
+        if not specs:
+            raise ValueError(f"No specification limits found for CQA '{cqa}'.")
+            
+        lsl, usl = specs.lsl, specs.usl
         cpk_value = analytics.calculate_cpk(report_df[cqa], lsl, usl)
         cpk_target = self.settings.app.process_capability.cpk_target
 
@@ -177,22 +178,22 @@ class SessionManager:
             file_bytes = reporting.generate_pdf_report(report_data, watermark="DRAFT")
             filename = f"DRAFT_VERITAS_Summary_{study_id}_{cqa}.pdf"
             mime = "application/pdf"
-        else: # PowerPoint
+        elif report_format == 'PowerPoint':
             file_bytes = reporting.generate_ppt_report(report_data)
             filename = f"DRAFT_VERITAS_PPT_{study_id}_{cqa}.pptx"
             mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        else:
+            raise ValueError(f"Unsupported report format: {report_format}")
 
-        # The manager returns the generated artifact; the UI layer handles storing it in session state.
+        # The manager returns a complete artifact; the UI layer handles storing it in session state.
         return {
-            'filename': filename,
-            'mime': mime,
-            'bytes': file_bytes,
-            'report_data': report_data # Pass along the data for the final signing step
+            'filename': filename, 'mime': mime, 'bytes': file_bytes,
+            'report_data': report_data  # Pass along the data for the final signing step
         }
 
     def finalize_and_sign_report(self, draft_report_data: Dict, signing_reason: str, username: str) -> Dict:
         """
-        Applies a signature to the report data and regenerates the final PDF.
+        Applies a signature to the report data, regenerates the final PDF, and logs the event.
 
         Args:
             draft_report_data (Dict): The 'report_data' dictionary from the draft generation step.
@@ -247,11 +248,11 @@ class SessionManager:
             return {'value': score, 'delta': round(score - 99.5, 1), 'sme_info': "Percentage of non-null data points. Target: 99.5%"}
         
         if kpi_name == 'first_pass_yield':
-            # Placeholder logic
+            # Placeholder logic for demonstration
             return {'value': 92.1, 'delta': 2.1, 'sme_info': "Percentage of processes completing without deviations. Target: 90%"}
         
         if kpi_name == 'mean_time_to_resolution':
-            # Placeholder logic
+            # Placeholder logic for demonstration
             return {'value': 4.5, 'delta': -0.5, 'sme_info': "Average business days to close a deviation. Target: 5 days"}
         
         raise ValueError(f"Unknown KPI: {kpi_name}")
@@ -259,7 +260,7 @@ class SessionManager:
     def get_risk_matrix_data(self) -> pd.DataFrame:
         """Retrieves data formatted for the program risk matrix plot."""
         # This would typically involve complex logic joining multiple data sources.
-        # Using placeholder data for this refactor.
+        # Using placeholder data for this demonstration.
         return pd.DataFrame({
             "program_id": ["VX-561", "VX-121", "VX-809", "VX-984"],
             "days_to_milestone": [50, 80, 200, 150],
@@ -269,46 +270,12 @@ class SessionManager:
         })
 
     def get_pareto_data(self) -> pd.DataFrame:
-        """Generates frequency data for a Pareto chart of deviation types."""
+        """Generates frequency data for a Pareto chart of deviation titles."""
         df = self.get_data('deviations')
         if df.empty or 'title' not in df.columns:
             return pd.DataFrame(columns=['Error Type', 'Frequency'])
         
-        # Extract error types from deviation titles using a regex
-        error_data = pd.DataFrame(
-            df['title'].str.extract(r'(OOS|Drift|Breach|Contamination|Missing)')[0]
-            .value_counts()
-            .reset_index()
-        )
-        error_data.columns = ['Error Type', 'Frequency']
-        return error_data.dropna()
-
-    def perform_global_search(self, search_term: str) -> List[Dict]:
-        """Performs a global search across different data modules."""
-        if not search_term:
-            return []
-        
-        results = []
-        search_term_lower = search_term.lower()
-
-        # Search Deviations
-        deviations = self.get_data('deviations')
-        if not deviations.empty:
-            mask = deviations.apply(lambda row: row.astype(str).str.lower().str.contains(search_term_lower).any(), axis=1)
-            for _, row in deviations[mask].iterrows():
-                results.append({
-                    'module': 'Deviations', 'id': row['id'], 'icon': '📌',
-                    'page_link': 'pages/5_Deviation_Hub.py'
-                })
-
-        # Search Stability Lots
-        stability = self.get_data('stability')
-        if not stability.empty:
-            mask = stability.apply(lambda row: row.astype(str).str.lower().str.contains(search_term_lower).any(), axis=1)
-            for lot_id in stability[mask]['lot_id'].unique():
-                 results.append({
-                    'module': 'Stability', 'id': lot_id, 'icon': '⏳',
-                    'page_link': 'pages/3_Stability_Dashboard.py'
-                })
-
-        return results
+        # Count the frequency of each distinct title
+        pareto_data = df['title'].value_counts().reset_index()
+        pareto_data.columns = ['Error Type', 'Frequency']
+        return pareto_data.sort_values(by='Frequency', ascending=False)
