@@ -5,13 +5,13 @@ import pandas as pd
 import logging
 from ..repository import MockDataRepository
 from ..session_manager import SessionManager
-from . import auth # Import the auth module
+from . import auth # Import the corrected auth module
 
 logger = logging.getLogger(__name__)
 
 @st.cache_resource
 def get_session_manager() -> SessionManager:
-    """Initializes and returns a singleton SessionManager instance using caching."""
+    """Initializes and returns a singleton SessionManager instance via caching."""
     logger.info("CORE: Initializing SessionManager for the first time this session.")
     try:
         repo = MockDataRepository(seed=42)
@@ -23,22 +23,22 @@ def get_session_manager() -> SessionManager:
 
 def initialize_page(page_title: str, page_icon: str):
     """
-    A single function to be called at the top of every page's main() function.
-    It now handles page config, authentication status, AND role-based authorization.
+    This is the ONLY function a page should call at the beginning of its main() function.
+    It handles page config, authentication status, and role-based authorization.
     """
+    # 1. Set the page configuration. This should be the first Streamlit command on the page.
     st.set_page_config(page_title=f"VERITAS | {page_title}", page_icon=page_icon, layout="wide")
     
-    # 1. Check if the user is logged in at all.
+    # 2. Check if the user is logged in. If not, stop execution.
     if not st.session_state.get('is_authenticated'):
         st.warning("🔒 You are not logged in. Please go to the Home page to log in.")
         st.page_link("app.py", label="Go to Login", icon="🏠")
         st.stop()
         
-    # 2. If logged in, check if their role is authorized for THIS specific page.
-    #    This is the new, correct place for this call.
+    # 3. CRITICAL FIX: If the user is logged in, check if their role is authorized for THIS page.
     auth.check_page_authorization()
     
-    # 3. If authorization passes, return the session manager.
+    # 4. If all checks pass, return the session manager for the page to use.
     return get_session_manager()
 
 @st.cache_data(ttl=600)
@@ -48,8 +48,6 @@ def get_cached_data(data_key: str) -> pd.DataFrame:
     try:
         manager = get_session_manager()
         data = manager.get_data(data_key)
-        if not isinstance(data, pd.DataFrame):
-            raise ValueError(f"Data for key '{data_key}' is not a DataFrame.")
         return data.copy()
     except Exception as e:
         st.error(f"Failed to load required data ('{data_key}').")
