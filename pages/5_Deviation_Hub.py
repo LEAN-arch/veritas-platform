@@ -5,7 +5,7 @@ import pandas as pd
 import logging
 from datetime import date
 
-# Import from the new centralized location
+# All imports should be from the new, professional structure.
 from src.veritas.ui import utils, auth
 
 logger = logging.getLogger(__name__)
@@ -26,8 +26,7 @@ def render_detail_view(manager, dev_id: str):
 
     dev = dev_details.iloc[0]
     
-    # --- Tabs for Investigation Details ---
-    detail_tab, data_tab, rca_tab, capa_tab = st.tabs(["📝 Details", "🔗 Linked Data", "🔎 Root Cause Analysis (RCA)", "🛠️ Corrective/Preventive Action (CAPA)"])
+    detail_tab, data_tab, rca_tab, capa_tab = st.tabs(["📝 Details", "🔗 Linked Data", "🔎 RCA", "🛠️ CAPA"])
 
     with detail_tab:
         st.metric("Status", dev['status'])
@@ -40,7 +39,6 @@ def render_detail_view(manager, dev_id: str):
         linked_record = dev['linked_record']
         hplc_data = utils.get_cached_data('hplc')
         
-        # Check if the linked record is a sample ID or an instrument ID
         sample_match = hplc_data[hplc_data['sample_id'] == linked_record]
         instrument_match = hplc_data[hplc_data['instrument_id'] == linked_record]
         
@@ -54,13 +52,13 @@ def render_detail_view(manager, dev_id: str):
     
     with rca_tab:
         st.subheader("Root Cause Analysis Documentation", anchor=False)
-        # Use a form to group inputs before saving
         with st.form("rca_form"):
             rca_problem = st.text_area("Problem Statement:", value=dev.get('rca_problem', ''), height=100)
             rca_5whys = st.text_area("5 Whys Analysis:", height=150, value=dev.get('rca_5whys', ''))
             rca_submitted = st.form_submit_button("💾 Save RCA")
             if rca_submitted:
-                # This would call a manager method like `manager.update_deviation_rca(...)`
+                # In a real app, this would call a manager method to update the backend
+                # manager.update_deviation_rca(dev_id, rca_problem, rca_5whys)
                 st.success("RCA details saved.")
 
     with capa_tab:
@@ -71,7 +69,8 @@ def render_detail_view(manager, dev_id: str):
             capa_date = st.date_input("Target Completion Date:", value=date.today())
             capa_submitted = st.form_submit_button("💾 Save CAPA Plan")
             if capa_submitted:
-                # This would call a manager method like `manager.update_deviation_capa(...)`
+                # In a real app, this would call a manager method to update the backend
+                # manager.update_deviation_capa(...)
                 st.success("CAPA plan saved.")
 
 def render_kanban_view(manager, dev_config):
@@ -80,7 +79,7 @@ def render_kanban_view(manager, dev_config):
     st.markdown("An interactive Kanban board to manage the lifecycle of quality events.")
     
     kanban_cols = st.columns(len(dev_config.kanban_states))
-    deviations_df = utils.get_cached_data('deviations') # Fetch once
+    deviations_df = utils.get_cached_data('deviations')
 
     for i, status in enumerate(dev_config.kanban_states):
         with kanban_cols[i]:
@@ -104,38 +103,40 @@ def render_kanban_view(manager, dev_config):
                             st.session_state.selected_dev_id = card_id
                             st.rerun()
                     with c2:
-                        # Only show "Advance" button if not in the final state
                         if status != dev_config.kanban_states[-1]:
-                            if st.button("▶️ Advance", key=f"adv_{card_id}", help=f"Move from {status} to next stage", use_container_width=True):
+                            if st.button("▶️ Advance", key=f"adv_{card_id}", help=f"Move to next stage", use_container_width=True):
                                 try:
                                     manager.advance_deviation_status(
                                         dev_id=card_id,
                                         current_status=status,
                                         username=st.session_state.username
                                     )
-                                    # Rerun to show the card in its new column
                                     st.rerun()
                                 except Exception as e:
                                     logger.error(f"Failed to advance deviation {card_id}: {e}", exc_info=True)
                                     st.error(f"Failed to advance deviation: {e}")
 
-# --- Main Page Logic ---
 def main():
-    """Main function to render the Deviation Management Hub page."""
-    manager = utils.initialize_page("Deviation Hub", "📌")
-    
-    # Initialize page-specific state directly
-    if 'selected_dev_id' not in st.session_state:
-        st.session_state.selected_dev_id = None
+    """
+    The main function for the page, ensuring correct initialization and flow.
+    """
+    try:
+        manager = utils.initialize_page("Deviation Hub", "📌")
+        
+        if 'selected_dev_id' not in st.session_state:
+            st.session_state.selected_dev_id = None
 
-    # Routing logic based on state
-    if st.session_state.selected_dev_id:
-        render_detail_view(manager, st.session_state.selected_dev_id)
-    else:
-        dev_config = manager.settings.app.deviation_management
-        render_kanban_view(manager, dev_config)
+        if st.session_state.selected_dev_id:
+            render_detail_view(manager, st.session_state.selected_dev_id)
+        else:
+            dev_config = manager.settings.app.deviation_management
+            render_kanban_view(manager, dev_config)
 
-    auth.display_compliance_footer()
+        auth.display_compliance_footer()
+        
+    except Exception as e:
+        logger.error(f"An error occurred on the Deviation Hub page: {e}", exc_info=True)
+        st.error("An unexpected error occurred. Please contact support.")
 
 
 if __name__ == "__main__":
