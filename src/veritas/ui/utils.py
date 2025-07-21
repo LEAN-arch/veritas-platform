@@ -19,12 +19,6 @@ logger = logging.getLogger(__name__)
 def get_session_manager() -> 'SessionManager':
     """
     Initializes and returns a singleton SessionManager instance for the user's session.
-
-    Using @st.cache_resource ensures that the SessionManager and its underlying
-    data repository are created only once per session, which is highly efficient.
-    
-    Returns:
-        SessionManager: The singleton instance for the current user session.
     """
     logger.info("CORE: Initializing SessionManager for the first time this session.")
     try:
@@ -43,28 +37,20 @@ def initialize_page(page_title: str, page_icon: str) -> 'SessionManager':
 
     This function enforces a strict, correct order of operations for every page load:
     1. Sets the page configuration (must be the first Streamlit command).
-    2. Checks if the user is logged in. If not, it stops execution and prompts login.
-    3. Checks if the logged-in user has the correct role to view the specific page.
+    2. Checks if the user is logged in.
+    3. Checks if the logged-in user has the correct role for the specific page.
     4. If all checks pass, it returns the session-wide business logic controller.
-
-    Args:
-        page_title (str): The title of the page.
-        page_icon (str): The emoji icon for the page.
-
-    Returns:
-        SessionManager: The active business logic controller for the session.
     """
     # Step 1: Set the page configuration. This MUST be the first `st` command.
     st.set_page_config(page_title=f"VERITAS | {page_title}", page_icon=page_icon, layout="wide")
     
-    # Step 2: Check if the user is logged in. If not, redirect to login page and stop.
+    # Step 2: Check if the user is logged in. If not, redirect and stop.
     if not st.session_state.get('is_authenticated'):
         st.warning("🔒 You must be logged in to access this page.")
         st.page_link("app.py", label="Go to Login Page", icon="🏠")
         st.stop()
         
     # Step 3: If logged in, check if their role is authorized for THIS page.
-    # This call now safely uses the corrected API within the auth module.
     auth.check_page_authorization()
     
     # Step 4: If all checks pass, retrieve the session manager and return it.
