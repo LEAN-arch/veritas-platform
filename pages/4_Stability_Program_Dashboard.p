@@ -1,4 +1,4 @@
-# pages/3_Stability_Program_Dashboard.py
+# pages/4_Stability_Program_Dashboard.py
 
 import streamlit as st
 import pandas as pd
@@ -84,7 +84,8 @@ def render_stability_profile(filtered_df: pd.DataFrame, stability_config):
     with col1:
         assay_purity = 'purity'
         if assay_purity in stability_config.spec_limits and assay_purity in filtered_df.columns:
-            use_pooled_purity = poolability_results.get(assay_purity, {}).get('poolable', False) if len(lot_filter) > 1 else True
+            # Pooled data can only be used if there are multiple lots and the test passes
+            use_pooled_purity = len(lot_filter) > 1 and poolability_results.get(assay_purity, {}).get('poolable', False)
             title = f"Purity Trend {'(Pooled)' if use_pooled_purity else '(Separate Lots)'}"
             
             projection = analytics.calculate_stability_projection(filtered_df, assay_purity, use_pooled_purity)
@@ -99,7 +100,8 @@ def render_stability_profile(filtered_df: pd.DataFrame, stability_config):
     with col2:
         assay_impurity = 'main_impurity'
         if assay_impurity in stability_config.spec_limits and assay_impurity in filtered_df.columns:
-            use_pooled_impurity = poolability_results.get(assay_impurity, {}).get('poolable', False) if len(lot_filter) > 1 else True
+            # Pooled data can only be used if there are multiple lots and the test passes
+            use_pooled_impurity = len(lot_filter) > 1 and poolability_results.get(assay_impurity, {}).get('poolable', False)
             title = f"Main Impurity Trend {'(Pooled)' if use_pooled_impurity else '(Separate Lots)'}"
             
             projection = analytics.calculate_stability_projection(filtered_df, assay_impurity, use_pooled_impurity)
@@ -130,14 +132,14 @@ def main():
             st.stop()
 
         st.sidebar.subheader("Select Stability Study", divider='blue')
-        product_options = sorted(stability_data['product_id'].unique())
+        product_options = sorted(stability_data['product_id'].unique().tolist())
         if not product_options:
             st.warning("No products available for analysis.")
             st.stop()
 
         product_filter = st.sidebar.selectbox("Select Product:", options=product_options, key="stability_product")
         
-        lot_options = sorted(stability_data[stability_data['product_id'] == product_filter]['lot_id'].unique())
+        lot_options = sorted(stability_data[stability_data['product_id'] == product_filter]['lot_id'].unique().tolist())
         if not lot_options:
             st.warning(f"No lots available for product '{product_filter}'.")
             st.stop()
@@ -154,7 +156,7 @@ def main():
         filtered_df = stability_data[
             (stability_data['product_id'] == product_filter) & 
             (stability_data['lot_id'].isin(lot_filter))
-        ]
+        ].copy() # Use .copy() to avoid SettingWithCopyWarning
         
         if filtered_df.empty:
             st.warning("No stability data available for the selected product and lot combination.")
@@ -162,9 +164,14 @@ def main():
 
         st.markdown("---")
         
+        # Only render the poolability assessment if more than one lot is selected.
         if len(lot_filter) > 1:
             render_poolability_assessment(filtered_df, manager.settings.app.stability_specs)
             st.markdown("---")
+        else:
+            # If only one lot, ensure poolability results are cleared so plots don't show "Pooled"
+            st.session_state.poolability_results = {}
+
 
         render_stability_profile(filtered_df, manager.settings.app.stability_specs)
 
