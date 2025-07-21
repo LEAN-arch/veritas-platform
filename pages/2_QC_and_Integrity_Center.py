@@ -1,4 +1,4 @@
-# pages/1_QC_Center.py
+# pages/2_QC_and_Integrity_Center.py
 
 import streamlit as st
 import pandas as pd
@@ -59,6 +59,7 @@ def render_rule_based_qc_tab(manager, selected_df: pd.DataFrame):
             st.subheader("3. Take Action", anchor=False)
             if st.button("Create Deviation Ticket from Results", type="secondary"):
                 try:
+                    # Logic is now delegated to the SessionManager
                     new_dev_id = manager.create_deviation_from_qc(
                         report_df=report_df,
                         study_id=selected_df['study_id'].iloc[0],
@@ -66,7 +67,7 @@ def render_rule_based_qc_tab(manager, selected_df: pd.DataFrame):
                     )
                     st.success(f"Successfully created a new deviation ticket: **{new_dev_id}**.")
                     st.info("You can view this ticket in the Deviation Hub.")
-                    st.session_state.qc_report = None # Clear the report
+                    st.session_state.qc_report = None # Clear the report after action
                 except Exception as e:
                     logger.error(f"Failed to create deviation ticket: {e}", exc_info=True)
                     st.error(f"Failed to create deviation ticket: {e}")
@@ -174,7 +175,8 @@ def main():
             st.stop()
 
         st.sidebar.subheader("Data Selection", divider='blue')
-        study_id_options = sorted(hplc_data['study_id'].unique())
+        # Use .tolist() for better performance and to avoid potential issues with numpy arrays in selectbox
+        study_id_options = sorted(hplc_data['study_id'].unique().tolist())
         if not study_id_options:
             st.warning("No studies available for analysis.")
             st.stop()
