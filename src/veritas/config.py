@@ -5,7 +5,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class _Limits:
-    """A simple class to hold LSL and USL values."""
+    """A simple data class to hold LSL and USL values."""
     def __init__(self, lsl: float, usl: float):
         self.lsl = lsl
         self.usl = usl
@@ -35,7 +35,7 @@ class _DeviationManagementSettings:
         self.kanban_states = ['Open', 'In Progress', 'Under Review', 'Closed']
 
 class _PlottingColors:
-    """Centralized color theme for plots."""
+    """Centralized color theme for all plots to ensure visual consistency."""
     def __init__(self):
         self.blue = "#1f77b4"
         self.orange = "#ff7f0e"
@@ -43,9 +43,8 @@ class _PlottingColors:
         self.red = "#d62728"
         self.purple = "#9467bd"
         self.gray = "#7f7f7f"
-        self.lightcyan = "#e0f2f1"
-        self.lightblue = "#aec7e8"
-
+        self.lightcyan = "#e0f2f1" # For node backgrounds
+        self.lightblue = "#aec7e8" # For secondary info
 
 class _AppSettings:
     """A container for all module-specific settings."""
@@ -58,7 +57,9 @@ class _VeritasConfig:
     """
     The main configuration class for the VERITAS application.
 
-    This acts as a singleton that holds all application settings.
+    This acts as a singleton that holds all application settings. It is instantiated
+    once and can then be imported throughout the application, providing a single
+    source of truth for all configuration parameters.
     """
     def __init__(self):
         try:
@@ -67,14 +68,16 @@ class _VeritasConfig:
             logger.info("Application configuration loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize AppConfig: {e}", exc_info=True)
-            raise RuntimeError(f"AppConfig initialization failed: {e}")
+            # This is a critical failure; the app cannot run without its config.
+            raise RuntimeError(f"FATAL: AppConfig initialization failed: {e}")
 
 # --- Singleton Instance ---
 # This creates a single, immutable instance of the configuration that can be
-# imported anywhere in the application without risk of modification.
+# imported anywhere in the application (e.g., `from . import config`).
+# This prevents state duplication and ensures all modules use the same settings.
 try:
     config = _VeritasConfig()
 except Exception as e:
-    # This is a critical failure; the app cannot run without its config.
     logger.critical(f"FATAL: Could not create the application config singleton: {e}", exc_info=True)
+    # Raising the exception here will stop the application from starting if config fails.
     raise
