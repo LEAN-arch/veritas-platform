@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from scipy import stats
 import graphviz
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 # Import the centralized settings for colors and configurations
 from .. import config
@@ -22,7 +22,7 @@ def create_empty_figure(message: str) -> go.Figure:
         message (str): The message to display on the empty figure.
 
     Returns:
-        go.Figure: An empty Plotly figure object.
+        go.Figure: An empty Plotly figure object with a centered annotation.
     """
     fig = go.Figure()
     fig.update_layout(
@@ -33,7 +33,7 @@ def create_empty_figure(message: str) -> go.Figure:
             'xref': 'paper',
             'yref': 'paper',
             'showarrow': False,
-            'font': {'size': 16}
+            'font': {'size': 16, 'color': 'grey'}
         }]
     )
     return fig
@@ -53,7 +53,7 @@ def plot_program_risk_matrix(df: pd.DataFrame) -> go.Figure:
     """
     required_cols = ['program_id', 'days_to_milestone', 'dqs', 'active_deviations', 'risk_quadrant']
     if not all(col in df.columns for col in required_cols):
-        raise ValueError(f"Risk matrix DataFrame is missing one or more required columns: {required_cols}")
+        return create_empty_figure(f"Risk matrix data is missing required columns.")
 
     if df.empty:
         return create_empty_figure("No program risk data available to display.")
@@ -79,7 +79,6 @@ def plot_program_risk_matrix(df: pd.DataFrame) -> go.Figure:
         },
         color_discrete_map=color_map,
         size_max=60,
-        title="<b>Program Risk Matrix</b>"
     )
     fig.update_traces(textposition='top center')
     fig.update_layout(
@@ -104,7 +103,7 @@ def plot_pareto_chart(df: pd.DataFrame, category_col: str, value_col: str) -> go
     """
     required_cols = [category_col, value_col]
     if not all(col in df.columns for col in required_cols):
-        raise ValueError(f"Pareto chart DataFrame is missing one or more required columns: {required_cols}")
+        return create_empty_figure(f"Pareto chart data is missing required columns.")
 
     if df.empty or df[value_col].sum() == 0:
         return create_empty_figure("No data available for Pareto analysis.")
@@ -116,32 +115,23 @@ def plot_pareto_chart(df: pd.DataFrame, category_col: str, value_col: str) -> go
     fig = go.Figure()
     # Bar chart for individual frequencies
     fig.add_trace(go.Bar(
-        x=df_sorted[category_col],
-        y=df_sorted[value_col],
-        name='Count',
-        marker_color=config.config.COLORS.orange
+        x=df_sorted[category_col], y=df_sorted[value_col],
+        name='Count', marker_color=config.config.COLORS.orange
     ))
     # Line chart for cumulative percentage
     fig.add_trace(go.Scatter(
-        x=df_sorted[category_col],
-        y=df_sorted['cumulative_percentage'],
-        name='Cumulative %',
-        yaxis='y2', # Link to the secondary y-axis
-        mode='lines+markers',
-        line=dict(color=config.config.COLORS.blue)
+        x=df_sorted[category_col], y=df_sorted['cumulative_percentage'],
+        name='Cumulative %', yaxis='y2', # Link to the secondary y-axis
+        mode='lines+markers', line=dict(color=config.config.COLORS.blue)
     ))
     
     fig.update_layout(
-        title='<b>Pareto Analysis of QC Failure Hotspots</b>',
         yaxis_title='Frequency Count',
         yaxis2=dict(
-            title='Cumulative Percentage (%)',
-            overlaying='y',
-            side='right',
-            range=[0, 105], # Give a little space at the top
-            showgrid=False
+            title='Cumulative Percentage (%)', overlaying='y', side='right',
+            range=[0, 105], showgrid=False
         ),
-        legend=dict(x=0.01, y=0.99)
+        legend=dict(x=0.01, y=0.99, xanchor='left', yanchor='top')
     )
     return fig
 
@@ -154,52 +144,47 @@ def plot_historical_control_chart(df: pd.DataFrame, cqa: str, events_df: Optiona
     Args:
         df (pd.DataFrame): DataFrame with 'injection_time' and the specified cqa column.
         cqa (str): The Critical Quality Attribute column to plot.
-        events_df (Optional[pd.DataFrame]): Optional DataFrame of events to overlay. Must contain
-                                             'timestamp', 'id', 'title', 'linked_record'.
+        events_df (Optional[pd.DataFrame]): Optional DataFrame of events to overlay.
 
     Returns:
         go.Figure: A Plotly figure object representing the control chart.
     """
     required_cols = ['injection_time', cqa]
     if not all(col in df.columns for col in required_cols):
-        raise ValueError(f"Control chart DataFrame is missing one or more required columns: {required_cols}")
-    if len(df) < 2:
+        return create_empty_figure(f"Control chart data is missing required columns.")
+    if len(df[cqa].dropna()) < 2:
         return create_empty_figure(f"Not enough data to plot control chart for {cqa}.")
     
-    mean = df[cqa].mean()
-    std_dev = df[cqa].std()
+    data = df.sort_values(by='injection_time')
+    mean = data[cqa].mean()
+    std_dev = data[cqa].std()
     ucl, lcl = mean + 3 * std_dev, mean - 3 * std_dev
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df['injection_time'], y=df[cqa], mode='lines+markers', name=cqa))
+    fig.add_trace(go.Scatter(x=data['injection_time'], y=data[cqa], mode='lines+markers', name=cqa))
     fig.add_hline(y=mean, line_dash="dash", line_color=config.config.COLORS.green, annotation_text="Mean")
     fig.add_hline(y=ucl, line_dash="dot", line_color=config.config.COLORS.red, annotation_text="UCL (3σ)")
     fig.add_hline(y=lcl, line_dash="dot", line_color=config.config.COLORS.red, annotation_text="LCL (3σ)")
     
-    # Overlay events if provided
-    if events_df is not None and not events_df.empty:
+    if events_df is not None and not events_df.empty and pd.api.types.is_datetime64_any_dtype(events_df.get('timestamp')):
         for _, event in events_df.iterrows():
-            if pd.api.types.is_datetime64_any_dtype(event.get('timestamp')):
-                fig.add_vline(
-                    x=event['timestamp'], line_dash="longdash",
-                    line_color=config.config.COLORS.gray, annotation_text=f"Event: {event['id']}"
-                )
+            fig.add_vline(
+                x=event['timestamp'], line_dash="longdash",
+                line_color=config.config.COLORS.gray, annotation_text=f"Event: {event['id']}"
+            )
 
-    fig.update_layout(
-        title=f"<b>Control Chart (I-Chart) for {cqa}</b>",
-        xaxis_title="Date", yaxis_title="Value", showlegend=False
-    )
+    fig.update_layout(xaxis_title="Date", yaxis_title="Value", showlegend=False)
     return fig
 
-def plot_process_capability(df: pd.DataFrame, cqa: str, lsl: float, usl: float, cpk: float, cpk_target: float) -> go.Figure:
+def plot_process_capability(df: pd.DataFrame, cqa: str, lsl: Optional[float], usl: Optional[float], cpk: float, cpk_target: float) -> go.Figure:
     """
-    Creates a process capability histogram with overlaid specification limits.
+    Creates a process capability histogram with overlaid specification limits and a dynamic title.
 
     Args:
         df (pd.DataFrame): DataFrame containing the CQA data.
         cqa (str): The CQA column to plot.
-        lsl (float): Lower specification limit.
-        usl (float): Upper specification limit.
+        lsl (Optional[float]): Lower specification limit.
+        usl (Optional[float]): Upper specification limit.
         cpk (float): Calculated Process Capability Index.
         cpk_target (float): The target Cpk value for visual comparison.
 
@@ -210,7 +195,7 @@ def plot_process_capability(df: pd.DataFrame, cqa: str, lsl: float, usl: float, 
         return create_empty_figure(f"No data to plot process capability for {cqa}.")
 
     title_color = config.config.COLORS.green if cpk >= cpk_target else config.config.COLORS.red
-    fig = px.histogram(df, x=cqa, nbins=40, title=f"<b>Process Capability for {cqa} | Cpk: {cpk:.2f}</b>")
+    fig = px.histogram(df, x=cqa, nbins=40, title=f"<b>Cpk: {cpk:.2f}</b>")
     
     if lsl is not None:
         fig.add_vline(x=lsl, line_dash="solid", line_color=config.config.COLORS.red, annotation_text="LSL")
@@ -221,7 +206,7 @@ def plot_process_capability(df: pd.DataFrame, cqa: str, lsl: float, usl: float, 
     fig.update_layout(title_font_color=title_color)
     return fig
 
-def plot_stability_trend(df: pd.DataFrame, assay: str, title: str, spec_limits: Dict, projection: Optional[Dict]) -> go.Figure:
+def plot_stability_trend(df: pd.DataFrame, assay: str, title: str, spec_limits: Any, projection: Optional[Dict]) -> go.Figure:
     """
     Creates a stability trend scatter plot with an optional regression line.
 
@@ -229,7 +214,7 @@ def plot_stability_trend(df: pd.DataFrame, assay: str, title: str, spec_limits: 
         df (pd.DataFrame): Stability data with 'lot_id', 'timepoint_months', and assay columns.
         assay (str): The assay column to plot.
         title (str): The title for the plot.
-        spec_limits (Dict): A dictionary with 'lsl' and 'usl' keys.
+        spec_limits (Any): A config object with 'lsl' and 'usl' attributes.
         projection (Optional[Dict]): A dictionary with regression results from `calculate_stability_projection`.
 
     Returns:
@@ -237,20 +222,20 @@ def plot_stability_trend(df: pd.DataFrame, assay: str, title: str, spec_limits: 
     """
     required_cols = ['lot_id', 'timepoint_months', assay]
     if not all(col in df.columns for col in required_cols):
-        raise ValueError(f"Stability trend DataFrame is missing one or more required columns: {required_cols}")
+        return create_empty_figure(f"Stability trend data is missing required columns.")
 
     fig = px.scatter(df, x='timepoint_months', y=assay, color='lot_id', title=f"<b>{title}</b>")
 
-    if projection:
+    if projection and 'pred_x' in projection:
         fig.add_trace(go.Scatter(
             x=projection['pred_x'], y=projection['pred_y'], mode='lines',
             name='Regression Fit', line=dict(color=config.config.COLORS.gray, dash='dash')
         ))
 
-    if spec_limits.get('lsl') is not None:
-        fig.add_hline(y=spec_limits['lsl'], line_dash="solid", line_color=config.config.COLORS.red, annotation_text="LSL")
-    if spec_limits.get('usl') is not None:
-        fig.add_hline(y=spec_limits['usl'], line_dash="solid", line_color=config.config.COLORS.red, annotation_text="USL")
+    if spec_limits and spec_limits.lsl is not None:
+        fig.add_hline(y=spec_limits.lsl, line_dash="solid", line_color=config.config.COLORS.red, annotation_text="LSL")
+    if spec_limits and spec_limits.usl is not None:
+        fig.add_hline(y=spec_limits.usl, line_dash="solid", line_color=config.config.COLORS.red, annotation_text="USL")
     
     fig.update_layout(xaxis_title="Timepoint (Months)", yaxis_title="Value")
     return fig
@@ -272,7 +257,7 @@ def plot_anova_results(df: pd.DataFrame, value_col: str, group_col: str, anova_r
     if p_value is None:
         return create_empty_figure("ANOVA test failed; cannot generate plot.")
 
-    title_text = f"<b>Distribution of {value_col} by {group_col} (p-value: {p_value:.4f})</b>"
+    title_text = f"<b>Distribution by {group_col} (p-value: {p_value:.4f})</b>"
     fig = px.box(df, x=group_col, y=value_col, points="all", color=group_col, title=title_text)
     return fig
 
@@ -299,10 +284,7 @@ def plot_qq(data: pd.Series) -> go.Figure:
         mode='lines', name='Normal Fit', line=dict(color=config.config.COLORS.red)
     ))
     
-    fig.update_layout(
-        title="<b>Q-Q Plot for Normality Assessment</b>",
-        xaxis_title="Theoretical Quantiles", yaxis_title="Sample Quantiles"
-    )
+    fig.update_layout(xaxis_title="Theoretical Quantiles", yaxis_title="Sample Quantiles", showlegend=False)
     return fig
 
 def plot_ml_anomaly_results_3d(df: pd.DataFrame, cols: List[str], labels: np.ndarray) -> go.Figure:
@@ -345,15 +327,16 @@ def plot_data_lineage_graph(df: pd.DataFrame, record_id: str) -> graphviz.Digrap
         record_id (str): The specific record ID to trace.
 
     Returns:
-        graphviz.Digraph: A Graphviz Digraph object.
+        graphviz.Digraph: A Graphviz Digraph object ready for rendering.
     """
     required_cols = ['record_id', 'timestamp', 'user', 'action']
     if not all(col in df.columns for col in required_cols):
-        raise ValueError(f"Lineage DataFrame is missing one or more required columns: {required_cols}")
+        raise ValueError(f"Lineage DataFrame is missing required columns.")
 
     dot = graphviz.Digraph(comment=f'Lineage for {record_id}')
     dot.attr(rankdir='TB', splines='ortho')
-    dot.attr('node', shape='box', style='rounded,filled', fillcolor=config.config.COLORS.lightcyan)
+    dot.attr('node', shape='box', style='rounded,filled', fillcolor=config.config.COLORS.lightcyan, fontname="Helvetica")
+    dot.attr('edge', fontname="Helvetica")
 
     record_df = df[df['record_id'] == record_id].sort_values('timestamp').copy()
     if record_df.empty:
@@ -362,7 +345,7 @@ def plot_data_lineage_graph(df: pd.DataFrame, record_id: str) -> graphviz.Digrap
 
     for i, (_, row) in enumerate(record_df.iterrows()):
         node_id = f'event_{i}'
-        # Use HTML-like labels for better formatting
+        # Use HTML-like labels for better formatting and control
         label = f"<{row['action']}<br/><font point-size='10'>By: {row['user']}</font><br/><font point-size='9'>{row['timestamp'].strftime('%Y-%m-%d %H:%M')}</font>>"
         dot.node(node_id, label)
         if i > 0:
